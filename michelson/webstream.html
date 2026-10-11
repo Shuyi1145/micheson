@@ -1,41 +1,73 @@
 <!doctype html>
 <html lang="zh-CN">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>迈克耳孙 · 图像演示</title>
+<meta name="color-scheme" content="dark">
+<title>迈克耳孙 · 视觉实验室</title>
 <style>
-body{margin:0;background:#0b1220;color:#e2e8f0;font:16px system-ui,sans-serif}
-main{max-width:960px;margin:auto;padding:20px}h1{font-size:24px;margin:0 0 8px}
-p{color:#94a3b8;line-height:1.6}#status{padding:12px;background:#172235;border-radius:8px}
-.video{position:relative;margin-top:16px;background:#000;border:1px solid #334155;border-radius:8px;overflow:hidden}
-img{display:block;width:100%;height:auto;min-height:100px}button{padding:8px 16px;cursor:pointer}
-#offline{position:absolute;inset:0;background:rgba(11,18,32,.85);display:grid;place-items:center;text-align:center;padding:24px}
-#offline[hidden]{display:none}.note{font-size:14px}
+:root{--bg:#0c1118;--surface:#141c26;--line:#263343;--muted:#94a4b7;--text:#edf3fa;--accent:#6be1c5}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 80% 0,rgba(38,109,98,.14),transparent 55%)}
+button{font:inherit;cursor:pointer}button:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.shell{max-width:1320px;margin:auto;padding:0 30px 24px;position:relative}header{display:flex;justify-content:space-between;align-items:center;padding:23px 0;border-bottom:1px solid var(--line);gap:16px}
+.brand{display:flex;align-items:center;gap:12px}.brand svg{width:38px;height:38px;color:var(--accent)}.brand strong{display:block;font-size:17px;letter-spacing:.03em}.brand small{display:block;margin-top:3px;color:var(--muted);font-size:10px;letter-spacing:.18em}
+.badge{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:100px;padding:8px 13px;font-size:12px;color:var(--muted);white-space:nowrap}.dot{width:7px;height:7px;border-radius:50%;background:#718096}
+.badge[data-state="ready"]{color:var(--accent);border-color:#2c665a}.badge[data-state="ready"] .dot{background:var(--accent);box-shadow:0 0 10px #6be1c555}.badge[data-state="paused"]{color:#efc887}.badge[data-state="paused"] .dot{background:#efc887}.badge[data-state="error"]{color:#f4a4a4}.badge[data-state="error"] .dot{background:#f4a4a4}
+.intro{display:flex;justify-content:space-between;align-items:end;gap:24px;padding:28px 0 22px}.eyebrow{font-size:10px;letter-spacing:.2em;color:var(--accent);margin:0 0 9px}h1{font-size:30px;font-weight:600;letter-spacing:.04em;margin:0}.subtitle{color:var(--muted);font-size:13px;margin:10px 0 0;line-height:1.7}.mode{font-size:12px;color:var(--muted);border-left:2px solid var(--accent);padding-left:12px;line-height:1.8}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr) 286px;gap:20px;align-items:start}.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}.panel-head h2{font-size:14px;font-weight:500;margin:0}.panel-head span{font-size:10px;letter-spacing:.13em;color:var(--muted)}
+.viewer{position:relative;min-height:260px;background:#05080d;display:flex;justify-content:center;align-items:center}.viewer img{display:block;max-width:100%;width:auto;max-height:calc(100vh - 290px);min-height:180px;object-fit:contain}.viewer:fullscreen{background:#05080d}.viewer:fullscreen img{max-height:100vh;max-width:100vw}.overlay{position:absolute;inset:0;background:#080e18ee;display:grid;place-items:center;text-align:center;padding:24px}.overlay[hidden]{display:none}.overlay p{max-width:360px;color:var(--muted);font-size:13px;line-height:1.8;margin:10px 0 0}.overlay strong{font-size:17px;font-weight:500}
+.viewer-footer{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 18px}.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:11px}.legend span:before{content:"";display:inline-block;width:5px;height:5px;margin-right:6px;vertical-align:middle;background:var(--accent);border-radius:50%}.legend span:nth-child(2):before{background:#8aaef7}.legend span:nth-child(3):before{background:#edb879}
+.icon-button{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:7px;padding:7px 10px;font-size:12px;white-space:nowrap}.icon-button:hover{background:#22303e}.aside{display:grid;gap:16px}.card{padding:18px}.card h2{font-size:12px;font-weight:500;color:var(--muted);margin:0 0 15px}.file{font-size:14px;font-weight:500;overflow-wrap:anywhere;margin:0 0 15px}.time{font-size:25px;font-variant-numeric:tabular-nums;letter-spacing:.03em}.time small{font-size:12px;color:var(--muted);margin-left:6px}.progress{height:4px;border-radius:4px;background:#2a3644;margin:13px 0 15px;overflow:hidden}.progress i{display:block;width:0%;height:100%;background:var(--accent);transition:width .8s linear}.row{display:flex;justify-content:space-between;gap:12px;font-size:12px;line-height:1.6;margin-top:9px}.row dt{color:var(--muted)}.row dd{margin:0;text-align:right}.settings{margin:0}.threshold{display:flex;align-items:baseline;gap:10px;margin-bottom:16px}.threshold b{font-size:42px;font-weight:500;line-height:1;font-variant-numeric:tabular-nums}.threshold span{font-size:11px;color:var(--muted)}.tag{font-size:10px;color:var(--accent);padding:3px 7px;background:#6be1c510;border:1px solid #6be1c528;border-radius:4px}.hint{font-size:12px;line-height:1.85;color:var(--muted);margin:14px 0 0}.actions{display:grid;gap:10px}.primary{border:1px solid #6be1c533;border-radius:8px;background:#6be1c518;color:var(--accent);padding:10px;font-size:12px}.primary:hover{background:#6be1c528}
+.flow{margin-top:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}.step{padding:16px 20px;background:#111923;display:flex;gap:12px;align-items:start}.step b{font-size:11px;font-weight:500;color:var(--accent);padding-top:2px}.step strong{font-size:12px;font-weight:500;display:block}.step p{font-size:11px;line-height:1.8;color:var(--muted);margin:5px 0 0}footer{display:flex;justify-content:space-between;gap:20px;color:#738499;font-size:10px;padding-top:20px;line-height:1.8}
+@media(min-width:1500px){.viewer img{max-height:740px}}@media(max-width:850px){.shell{padding:0 18px 20px}.workspace{grid-template-columns:1fr}.aside{grid-template-columns:1fr 1fr}.aside .actions{grid-column:1/-1}.viewer img{max-height:none;width:100%}.mode{display:none}.flow{grid-template-columns:1fr}.intro{padding-top:23px}h1{font-size:26px}footer{flex-wrap:wrap}}
+@media(max-width:480px){.shell{padding:0 12px 18px}.brand strong{font-size:14px}.brand small{font-size:8px}.badge{padding:7px 9px;font-size:10px}.brand svg{width:29px}.aside{grid-template-columns:1fr}.viewer-footer{padding:12px}.legend{gap:10px;font-size:10px}.panel-head{padding:13px}.card{padding:16px}h1{font-size:24px}}
+@media(prefers-reduced-motion:reduce){.progress i{transition:none}}
 </style>
-<main>
-<h1>迈克耳孙 · 图像演示</h1>
-<p>上方：原始测量画面　｜　下方左：开运算　｜　下方右：闭运算</p>
-<div id="status" role="status">正在连接香橙派…</div>
-<div class="video"><img id="video" alt="原始画面与开、闭运算实时对比"><div id="offline">正在等待图像源…</div></div>
-<p class="note">只读预览，测量和可视化阈值调节在桌面界面操作；显示参数与桌面同步。纯网页启动采用配置值。JPEG 压缩图像不能作为原始测量数据。</p>
-<button id="reconnect">重新连接</button>
+</head>
+<body>
+<main class="shell">
+<header><div class="brand"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="17" stroke="currentColor" opacity=".35"/><circle cx="20" cy="20" r="11" stroke="currentColor"/><circle cx="20" cy="20" r="5" stroke="currentColor"/><path d="M2 20h8m20 0h8M20 2v8m0 20v8" stroke="currentColor"/></svg><div><strong>迈克耳孙 · 视觉实验室</strong><small>MICHELSON / OPTICAL WORKSPACE</small></div></div><div id="connection" class="badge" data-state="waiting" role="status"><i class="dot"></i><span id="status">正在连接</span></div></header>
+<section class="intro"><div><p class="eyebrow">INTERFERENCE VISUALIZATION</p><h1>让条纹变化清晰可见</h1><p class="subtitle">原始画面与形态学处理对比，来自同一视频帧。</p></div><div class="mode">香橙派图传<br>只读观察 · 桌面测量</div></section>
+<section class="workspace" aria-label="视频与显示参数">
+<div class="panel"><div class="panel-head"><h2>干涉图样 / 同帧对比</h2><span>RAW · OPEN · CLOSE</span></div><div id="viewer" class="viewer"><img id="video" alt="上方原始画面，下方左开运算、右闭运算"><div id="offline" class="overlay"><div><strong id="offline-title">等待图像源</strong><p id="offline-detail">正在连接图传服务。视频画面就绪后将在这里显示。</p></div></div></div><div class="viewer-footer"><div class="legend"><span>原始画面</span><span>开运算</span><span>闭运算</span></div><button id="fullscreen" class="icon-button" type="button">全屏查看</button></div></div>
+<aside class="aside">
+<section class="panel card"><h2>播放状态</h2><p id="source" class="file">等待视频信息</p><div class="time"><span id="current-time">—</span><small>/ <span id="duration">—</span></small></div><div class="progress" role="progressbar" aria-label="视频播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress-fill"></i></div><dl class="settings"><div class="row"><dt>运行状态</dt><dd id="play-state">等待连接</dd></div><div class="row"><dt>播放轮次</dt><dd id="pass">—</dd></div><div class="row"><dt>画面更新</dt><dd id="age">—</dd></div></dl></section>
+<section class="panel card"><h2>二值化显示阈值</h2><div class="threshold"><b id="threshold">—</b><span>/ 255</span><small id="threshold-mode" class="tag">等待参数</small></div><dl class="settings"><div class="row"><dt>中值降噪</dt><dd id="denoise">—</dd></div><div class="row"><dt>椭圆核尺寸</dt><dd id="kernel">—</dd></div></dl><p class="hint">在桌面“可视化调节二值化阈值”中调整并应用，网页同步更新。处理只改变显示，不改变原始灰度计数。</p></section>
+<div class="actions"><button id="reconnect" class="primary" type="button">重新连接图传</button><p class="hint" style="margin:0">浏览器只读。开始记录、暂停播放及计算保存，请在桌面界面操作。</p></div>
+</aside>
+</section>
+<section class="flow" aria-label="测量方法说明，不代表实时审核结果"><div class="step"><b>01</b><div><strong>四点独立采集</strong><p>上、右、下、左分别保留原始灰度。</p></div></div><div class="step"><b>02</b><div><strong>逐路质量审核</strong><p>不合格通道保留记录，不参与合并。</p></div></div><div class="step"><b>03</b><div><strong>有效通道合并</strong><p>至少三路通过审核与一致性检查。</p></div></div></section>
+<footer><span>预览约 8 帧/秒 · JPEG 压缩 · 非原始测量数据</span><span>仅在可信局域网或 VPN 内访问</span></footer>
 </main>
 <script>
-const video=document.getElementById('video'),status=document.getElementById('status'),offline=document.getElementById('offline');
-let streamError=false;
-function connect(){streamError=false;video.src='/stream.mjpg?t='+Date.now();}
-video.onerror=()=>{streamError=true;offline.hidden=false;offline.textContent='图传连接中断，请点击重新连接';};
-document.getElementById('reconnect').onclick=connect;
-async function poll(){
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);
- try{const r=await fetch('/status',{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error('HTTP '+r.status);
- const s=await r.json(),p=s.playback;offline.hidden=(s.healthy||(p&&p.paused))&&!streamError;
- status.textContent=p&&(s.healthy||p.paused)?'视频回放 · '+p.name+' · '+p.position_s.toFixed(1)+' / '+p.duration_s.toFixed(1)+' 秒 · 第 '+p.pass+' 遍'+(p.paused?' · 已暂停':p.active_measurement?' · 单次记录中':' · 循环预览'):s.healthy?'正在接收 · 最近采集 '+s.age_s.toFixed(1)+' 秒前 · 图传约 8 帧/秒':'采集异常：'+(s.error||'超过 3 秒没有新帧');
- if(s.display_options)status.textContent+=' · 阈值：'+(s.display_options.threshold===null?'自动':s.display_options.threshold);
- if(!s.healthy)offline.textContent='没有实时画面：'+(s.error||'摄像头超时');
- }catch(e){offline.hidden=false;offline.textContent='无法连接香橙派，请检查网络和程序';status.textContent='连接中断';}
- clearTimeout(timer);setTimeout(poll,1000);
+const el=id=>document.getElementById(id);
+const video=el('video'),offline=el('offline'),badge=el('connection');
+let streamError=false,lastStatus=null,hasFrame=false;
+function number(value){return typeof value==='number'&&Number.isFinite(value);}
+function timeLabel(value){if(!number(value))return '—';const seconds=Math.max(0,value);return Math.floor(seconds/60).toString().padStart(2,'0')+':'+(seconds%60).toFixed(1).padStart(4,'0');}
+function overlay(title,detail){offline.hidden=false;el('offline-title').textContent=title;el('offline-detail').textContent=detail;}
+function render(s){
+ lastStatus=s;const p=s.playback,paused=!!(p&&p.paused),connected=(s.healthy||paused)&&!streamError;
+ badge.dataset.state=connected?(paused?'paused':'ready'):'error';el('status').textContent=connected?(paused?'播放已暂停':'图传已连接'):'连接异常';
+ offline.hidden=connected&&hasFrame;
+ if(!connected)overlay('暂无可用画面',s.error||'超过 3 秒没有新帧，请检查图像源或重新连接。');
+ else if(!hasFrame)overlay('等待视频画面','状态已连接，正在等待第一帧。');
+ el('source').textContent=p?p.name:'实时图像源';el('current-time').textContent=p?timeLabel(p.position_s):'—';el('duration').textContent=p?timeLabel(p.duration_s):'—';
+ el('play-state').textContent=connected?(paused?'已暂停':p&&p.active_measurement?'单次记录中':p?'循环预览':'实时预览'):'等待恢复';
+ el('pass').textContent=p&&number(p.pass)?'第 '+p.pass+' 遍':'—';el('age').textContent=number(s.age_s)?s.age_s.toFixed(1)+' 秒前':'—';
+ const percent=p&&number(p.position_s)&&number(p.duration_s)&&p.duration_s>0?Math.min(100,Math.max(0,p.position_s/p.duration_s*100)):0;
+ el('progress-fill').style.width=percent+'%';document.querySelector('.progress').setAttribute('aria-valuenow',String(Math.round(percent)));
+ if(s.display_options){const o=s.display_options;el('threshold').textContent=o.threshold===null?'自动':String(o.threshold);el('threshold-mode').textContent=o.threshold===null?'Otsu 自动':'手动阈值';el('denoise').textContent=o.denoise?'3 × 3 中值':'已关闭';el('kernel').textContent=o.kernel_size+' × '+o.kernel_size;}
 }
+function connect(){streamError=false;hasFrame=false;badge.dataset.state='waiting';el('status').textContent='正在连接';overlay('正在重新连接','请稍候，正在等待图传画面。');video.src='/stream.mjpg?t='+Date.now();}
+video.onload=()=>{hasFrame=true;streamError=false;if(lastStatus)render(lastStatus);};
+video.onerror=()=>{streamError=true;badge.dataset.state='error';el('status').textContent='图传中断';overlay('图传连接中断','请检查网络和程序，随后点击“重新连接图传”。');};
+el('reconnect').onclick=connect;
+el('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await el('viewer').requestFullscreen();}catch(e){el('fullscreen').textContent='浏览器不支持全屏';}};
+document.addEventListener('fullscreenchange',()=>{el('fullscreen').textContent=document.fullscreenElement?'退出全屏':'全屏查看';});
+async function poll(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{const r=await fetch('/status',{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error('HTTP '+r.status);render(await r.json());}catch(e){badge.dataset.state='error';el('status').textContent='连接中断';el('play-state').textContent='无法连接';overlay('无法连接图传服务','请检查网络和香橙派程序是否运行。');}finally{clearTimeout(timer);setTimeout(poll,1000);}}
 connect();poll();
 </script>
+</body>
 </html>

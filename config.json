@@ -7,7 +7,7 @@
     "reading_source": "reference-based estimate subsequently confirmed by user"
   },
   "preview": {
-    "threshold": null,
+    "threshold": 65,
     "kernel_size": 3,
     "denoise": true
   },
