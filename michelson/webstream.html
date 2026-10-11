@@ -28,13 +28,13 @@ button{font:inherit;cursor:pointer}button:focus-visible{outline:2px solid var(--
 <body>
 <main class="shell">
 <header><div class="brand"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="17" stroke="currentColor" opacity=".35"/><circle cx="20" cy="20" r="11" stroke="currentColor"/><circle cx="20" cy="20" r="5" stroke="currentColor"/><path d="M2 20h8m20 0h8M20 2v8m0 20v8" stroke="currentColor"/></svg><div><strong>迈克耳孙 · 视觉实验室</strong><small>MICHELSON / OPTICAL WORKSPACE</small></div></div><div id="connection" class="badge" data-state="waiting" role="status"><i class="dot"></i><span id="status">正在连接</span></div></header>
-<section class="intro"><div><p class="eyebrow">INTERFERENCE VISUALIZATION</p><h1>让条纹变化清晰可见</h1><p class="subtitle">原始画面与形态学处理对比，来自同一视频帧。</p></div><div class="mode">香橙派图传<br>只读观察 · 桌面测量</div></section>
-<section class="workspace" aria-label="视频与显示参数">
-<div class="panel"><div class="panel-head"><h2>干涉图样 / 同帧对比</h2><span>RAW · OPEN · CLOSE</span></div><div id="viewer" class="viewer"><img id="video" alt="上方原始画面，下方左开运算、右闭运算"><div id="offline" class="overlay"><div><strong id="offline-title">等待图像源</strong><p id="offline-detail">正在连接图传服务。视频画面就绪后将在这里显示。</p></div></div></div><div class="viewer-footer"><div class="legend"><span>原始画面</span><span>开运算</span><span>闭运算</span></div><button id="fullscreen" class="icon-button" type="button">全屏查看</button></div></div>
+<section class="intro"><div><p class="eyebrow">INTERFERENCE VISUALIZATION</p><h1>让条纹变化清晰可见</h1><p class="subtitle">原始采集画面与形态学处理对比，来自同一图像帧。</p></div><div class="mode">香橙派图传<br>只读观察 · 桌面测量</div></section>
+<section class="workspace" aria-label="采集画面与显示参数">
+<div class="panel"><div class="panel-head"><h2>干涉图样 / 同帧对比</h2><span>RAW · OPEN · CLOSE</span></div><div id="viewer" class="viewer"><img id="video" alt="上方原始画面，下方左开运算、右闭运算"><div id="offline" class="overlay"><div><strong id="offline-title">等待图像源</strong><p id="offline-detail">正在连接图传服务。采集画面就绪后将在这里显示。</p></div></div></div><div class="viewer-footer"><div class="legend"><span>原始画面</span><span>开运算</span><span>闭运算</span></div><button id="fullscreen" class="icon-button" type="button">全屏查看</button></div></div>
 <aside class="aside">
-<section class="panel card"><h2>播放状态</h2><p id="source" class="file">等待视频信息</p><div class="time"><span id="current-time">—</span><small>/ <span id="duration">—</span></small></div><div class="progress" role="progressbar" aria-label="视频播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress-fill"></i></div><dl class="settings"><div class="row"><dt>运行状态</dt><dd id="play-state">等待连接</dd></div><div class="row"><dt>播放轮次</dt><dd id="pass">—</dd></div><div class="row"><dt>画面更新</dt><dd id="age">—</dd></div></dl></section>
+<section class="panel card"><h2>画面状态</h2><p class="file">干涉图像采集与处理</p><dl class="settings"><div class="row"><dt>运行状态</dt><dd id="play-state">等待连接</dd></div><div class="row"><dt>预览帧序号</dt><dd id="preview-frame">—</dd></div><div class="row"><dt>画面更新</dt><dd id="age">—</dd></div></dl></section>
 <section class="panel card"><h2>二值化显示阈值</h2><div class="threshold"><b id="threshold">—</b><span>/ 255</span><small id="threshold-mode" class="tag">等待参数</small></div><dl class="settings"><div class="row"><dt>中值降噪</dt><dd id="denoise">—</dd></div><div class="row"><dt>椭圆核尺寸</dt><dd id="kernel">—</dd></div></dl><p class="hint">在桌面“可视化调节二值化阈值”中调整并应用，网页同步更新。处理只改变显示，不改变原始灰度计数。</p></section>
-<div class="actions"><button id="reconnect" class="primary" type="button">重新连接图传</button><p class="hint" style="margin:0">浏览器只读。开始记录、暂停播放及计算保存，请在桌面界面操作。</p></div>
+<div class="actions"><button id="reconnect" class="primary" type="button">重新连接图传</button><p class="hint" style="margin:0">浏览器只读。记录控制及计算保存，请在桌面界面操作。</p></div>
 </aside>
 </section>
 <section class="flow" aria-label="测量方法说明，不代表实时审核结果"><div class="step"><b>01</b><div><strong>四点独立采集</strong><p>上、右、下、左分别保留原始灰度。</p></div></div><div class="step"><b>02</b><div><strong>逐路质量审核</strong><p>不合格通道保留记录，不参与合并。</p></div></div><div class="step"><b>03</b><div><strong>有效通道合并</strong><p>至少三路通过审核与一致性检查。</p></div></div></section>
@@ -45,19 +45,15 @@ const el=id=>document.getElementById(id);
 const video=el('video'),offline=el('offline'),badge=el('connection');
 let streamError=false,lastStatus=null,hasFrame=false;
 function number(value){return typeof value==='number'&&Number.isFinite(value);}
-function timeLabel(value){if(!number(value))return '—';const seconds=Math.max(0,value);return Math.floor(seconds/60).toString().padStart(2,'0')+':'+(seconds%60).toFixed(1).padStart(4,'0');}
 function overlay(title,detail){offline.hidden=false;el('offline-title').textContent=title;el('offline-detail').textContent=detail;}
 function render(s){
  lastStatus=s;const p=s.playback,paused=!!(p&&p.paused),connected=(s.healthy||paused)&&!streamError;
- badge.dataset.state=connected?(paused?'paused':'ready'):'error';el('status').textContent=connected?(paused?'播放已暂停':'图传已连接'):'连接异常';
+ badge.dataset.state=connected?(paused?'paused':'ready'):'error';el('status').textContent=connected?(paused?'画面已暂停':'图传已连接'):'连接异常';
  offline.hidden=connected&&hasFrame;
  if(!connected)overlay('暂无可用画面',s.error||'超过 3 秒没有新帧，请检查图像源或重新连接。');
- else if(!hasFrame)overlay('等待视频画面','状态已连接，正在等待第一帧。');
- el('source').textContent=p?p.name:'实时图像源';el('current-time').textContent=p?timeLabel(p.position_s):'—';el('duration').textContent=p?timeLabel(p.duration_s):'—';
- el('play-state').textContent=connected?(paused?'已暂停':p&&p.active_measurement?'单次记录中':p?'循环预览':'实时预览'):'等待恢复';
- el('pass').textContent=p&&number(p.pass)?'第 '+p.pass+' 遍':'—';el('age').textContent=number(s.age_s)?s.age_s.toFixed(1)+' 秒前':'—';
- const percent=p&&number(p.position_s)&&number(p.duration_s)&&p.duration_s>0?Math.min(100,Math.max(0,p.position_s/p.duration_s*100)):0;
- el('progress-fill').style.width=percent+'%';document.querySelector('.progress').setAttribute('aria-valuenow',String(Math.round(percent)));
+ else if(!hasFrame)overlay('等待采集画面','状态已连接，正在等待第一帧。');
+ el('play-state').textContent=connected?(paused?'已暂停':p&&p.active_measurement?'记录中':'图像预览中'):'等待恢复';
+ el('preview-frame').textContent=number(s.frame)?String(s.frame):'—';el('age').textContent=number(s.age_s)?s.age_s.toFixed(1)+' 秒前':'—';
  if(s.display_options){const o=s.display_options;el('threshold').textContent=o.threshold===null?'自动':String(o.threshold);el('threshold-mode').textContent=o.threshold===null?'Otsu 自动':'手动阈值';el('denoise').textContent=o.denoise?'3 × 3 中值':'已关闭';el('kernel').textContent=o.kernel_size+' × '+o.kernel_size;}
 }
 function connect(){streamError=false;hasFrame=false;badge.dataset.state='waiting';el('status').textContent='正在连接';overlay('正在重新连接','请稍候，正在等待图传画面。');video.src='/stream.mjpg?t='+Date.now();}
