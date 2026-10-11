@@ -1,3 +1,4 @@
+# -*- coding: gb2312 -*-
 from __future__ import annotations
 
 import math
@@ -12,6 +13,10 @@ from PIL import Image, ImageTk
 
 from .signal import AnalysisResult, WavelengthResult, analyze_signal, calculate_wavelength
 from .storage import save_measurement
+
+
+# Ubuntu 22.04 µÄ Pillow 9.0 Ê¹ÓÃ¾É³£Á¿£¬ÐÂ°æ±¾ÓÅÏÈÊ¹ÓÃÃ¶¾Ù¡£
+_BILINEAR = getattr(Image, "Resampling", Image).BILINEAR
 
 
 class MichelsonApp:
@@ -32,7 +37,7 @@ class MichelsonApp:
         self.photo: ImageTk.PhotoImage | None = None
         self.video_item: int | None = None
 
-        self.root.title("è¿ˆå…‹è€³å­™å¹²æ¶‰æ³¢é•¿æµ‹é‡")
+        self.root.title("Âõ¿Ë¶úËï¸ÉÉæ²¨³¤²âÁ¿")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._build_ui()
         self._update_frame()
@@ -44,8 +49,8 @@ class MichelsonApp:
 
         header = ttk.Frame(self.root, padding=(12, 10))
         header.pack(fill="x")
-        ttk.Label(header, text="è¿ˆå…‹è€³å­™å¹²æ¶‰æ³¢é•¿æµ‹é‡", style="Title.TLabel").pack(side="left")
-        self.state_var = tk.StringVar(value="æ¼”ç¤ºæ¨¡å¼" if self.demo_mode else "é¢„è§ˆä¸­")
+        ttk.Label(header, text="Âõ¿Ë¶úËï¸ÉÉæ²¨³¤²âÁ¿", style="Title.TLabel").pack(side="left")
+        self.state_var = tk.StringVar(value="ÑÝÊ¾Ä£Ê½" if self.demo_mode else "Ô¤ÀÀÖÐ")
         ttk.Label(header, textvariable=self.state_var).pack(side="right")
 
         content = ttk.Frame(self.root, padding=(12, 0, 12, 8))
@@ -56,11 +61,11 @@ class MichelsonApp:
 
         right = ttk.Frame(content, padding=(12, 0, 0, 0))
         right.grid(row=0, column=1, sticky="nsew")
-        ttk.Label(right, text="ä¸­å¿ƒåŒºåŸŸå¹³å‡ç°åº¦ï¼ˆæœ€è¿‘ 360 å¸§ï¼‰").pack(anchor="w")
+        ttk.Label(right, text="ÖÐÐÄÇøÓòÆ½¾ù»Ò¶È£¨×î½ü 360 Ö¡£©").pack(anchor="w")
         self.wave_canvas = tk.Canvas(right, width=520, height=230, bg="#101820", highlightthickness=0)
         self.wave_canvas.pack(fill="x", pady=(4, 12))
 
-        readings = ttk.LabelFrame(right, text="åƒåˆ†å°ºè¯»æ•°", padding=10)
+        readings = ttk.LabelFrame(right, text="Ç§·Ö³ß¶ÁÊý", padding=10)
         readings.pack(fill="x")
         self.start_var = tk.StringVar()
         self.end_var = tk.StringVar()
@@ -68,44 +73,44 @@ class MichelsonApp:
             value="" if self.measurement_config.get("micrometer_resolution_um") is None
             else str(self.measurement_config["micrometer_resolution_um"])
         )
-        self._entry_row(readings, 0, "èµ·å§‹è¯»æ•° / mm", self.start_var)
-        self._entry_row(readings, 1, "ç»ˆæ­¢è¯»æ•° / mm", self.end_var)
-        self._entry_row(readings, 2, "åˆ†è¾¨çŽ‡ / Î¼m", self.resolution_var)
+        self._entry_row(readings, 0, "ÆðÊ¼¶ÁÊý / mm", self.start_var)
+        self._entry_row(readings, 1, "ÖÕÖ¹¶ÁÊý / mm", self.end_var)
+        self._entry_row(readings, 2, "·Ö±æÂÊ / ¦Ìm", self.resolution_var)
 
         buttons = ttk.Frame(right)
         buttons.pack(fill="x", pady=10)
-        self.start_button = ttk.Button(buttons, text="å¼€å§‹è®°å½•", command=self.start_recording)
-        self.stop_button = ttk.Button(buttons, text="åœæ­¢å¹¶åˆ†æž", command=self.stop_and_analyze, state="disabled")
+        self.start_button = ttk.Button(buttons, text="¿ªÊ¼¼ÇÂ¼", command=self.start_recording)
+        self.stop_button = ttk.Button(buttons, text="Í£Ö¹²¢·ÖÎö", command=self.stop_and_analyze, state="disabled")
         self.start_button.pack(side="left", expand=True, fill="x", padx=(0, 4))
         self.stop_button.pack(side="left", expand=True, fill="x", padx=(4, 0))
-        ttk.Button(right, text="æŒ‰å½“å‰è¯»æ•°è®¡ç®—å¹¶ä¿å­˜", command=self.calculate_and_save).pack(fill="x")
+        ttk.Button(right, text="°´µ±Ç°¶ÁÊý¼ÆËã²¢±£´æ", command=self.calculate_and_save).pack(fill="x")
 
-        results = ttk.LabelFrame(right, text="æµ‹é‡ç»“æžœ", padding=10)
+        results = ttk.LabelFrame(right, text="²âÁ¿½á¹û", padding=10)
         results.pack(fill="both", expand=True, pady=(10, 0))
         self.result_vars = {
-            "frames": tk.StringVar(value="â€”"),
-            "cycles": tk.StringVar(value="â€”"),
-            "rate": tk.StringVar(value="â€”"),
-            "contrast": tk.StringVar(value="â€”"),
-            "wavelength": tk.StringVar(value="â€”"),
-            "deviation": tk.StringVar(value="â€”"),
-            "quality": tk.StringVar(value="â€”"),
+            "frames": tk.StringVar(value="\u2014"),
+            "cycles": tk.StringVar(value="\u2014"),
+            "rate": tk.StringVar(value="\u2014"),
+            "contrast": tk.StringVar(value="\u2014"),
+            "wavelength": tk.StringVar(value="\u2014"),
+            "deviation": tk.StringVar(value="\u2014"),
+            "quality": tk.StringVar(value="\u2014"),
         }
         labels = [
-            ("frames", "é‡‡æ ·"),
-            ("cycles", "å‘¨æœŸæ•°ï¼ˆç›¸ä½ / è¿‡é›¶ï¼‰"),
-            ("rate", "å¸§çŽ‡ / æ¡çº¹é¢‘çŽ‡"),
-            ("contrast", "æ¡çº¹å¯¹æ¯”åº¦"),
-            ("wavelength", "æµ‹å¾—æ³¢é•¿"),
-            ("deviation", "ç›¸å¯¹ 632.8 nm åå·®"),
-            ("quality", "æ•°æ®è´¨é‡"),
+            ("frames", "²ÉÑù"),
+            ("cycles", "ÖÜÆÚÊý£¨ÏàÎ» / ¹ýÁã£©"),
+            ("rate", "Ö¡ÂÊ / ÌõÎÆÆµÂÊ"),
+            ("contrast", "ÌõÎÆ¶Ô±È¶È"),
+            ("wavelength", "²âµÃ²¨³¤"),
+            ("deviation", "Ïà¶Ô 632.8 nm Æ«²î"),
+            ("quality", "Êý¾ÝÖÊÁ¿"),
         ]
         for row, (key, label) in enumerate(labels):
             ttk.Label(results, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=2)
             ttk.Label(results, textvariable=self.result_vars[key], style="Value.TLabel").grid(
                 row=row, column=1, sticky="w", pady=2
             )
-        self.warning_var = tk.StringVar(value="å•å‡»ç”»é¢å¯ç§»åŠ¨é‡‡æ ·åŒºåŸŸï¼›æµ‹é‡æ—¶å¿…é¡»å•å‘ã€ç¼“æ…¢ç§»åŠ¨ M2ã€‚")
+        self.warning_var = tk.StringVar(value="µ¥»÷»­Ãæ¿ÉÒÆ¶¯²ÉÑùÇøÓò£»²âÁ¿Ê±±ØÐëµ¥Ïò¡¢»ºÂýÒÆ¶¯ M2¡£")
         ttk.Label(results, textvariable=self.warning_var, foreground="#b45309", wraplength=480).grid(
             row=len(labels), column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
@@ -144,7 +149,7 @@ class MichelsonApp:
     def _update_frame(self) -> None:
         ok, frame, timestamp = self.camera.read()
         if not ok or frame is None:
-            self.state_var.set("æ‘„åƒå¤´è¯»å–å¤±è´¥")
+            self.state_var.set("ÉãÏñÍ·¶ÁÈ¡Ê§°Ü")
             self.root.after(100, self._update_frame)
             return
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -154,7 +159,7 @@ class MichelsonApp:
         if self.recording:
             self.timestamps.append(timestamp)
             self.intensities.append(intensity)
-            self.result_vars["frames"].set(f"{len(self.timestamps)} å¸§")
+            self.result_vars["frames"].set(f"{len(self.timestamps)} Ö¡")
 
         display = frame.copy()
         x, y = self.roi_center or (gray.shape[1] // 2, gray.shape[0] // 2)
@@ -173,7 +178,7 @@ class MichelsonApp:
         rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
         canvas_width = max(self.video_canvas.winfo_width(), 640)
         canvas_height = max(self.video_canvas.winfo_height(), 480)
-        image = Image.fromarray(rgb).resize((canvas_width, canvas_height), Image.Resampling.BILINEAR)
+        image = Image.fromarray(rgb).resize((canvas_width, canvas_height), _BILINEAR)
         self.photo = ImageTk.PhotoImage(image=image)
         if self.video_item is None:
             self.video_item = self.video_canvas.create_image(0, 0, image=self.photo, anchor="nw")
@@ -200,32 +205,32 @@ class MichelsonApp:
         y_coordinates = height - 8 - (values - low) / (high - low) * (height - 16)
         points = [coordinate for pair in zip(x_coordinates, y_coordinates) for coordinate in pair]
         canvas.create_line(*points, fill="#38bdf8", width=2, smooth=False)
-        canvas.create_text(8, 8, text=f"{low:.1f}â€“{high:.1f}", fill="#d7e5ee", anchor="nw")
+        canvas.create_text(8, 8, text=f"{low:.1f}\u2013{high:.1f}", fill="#d7e5ee", anchor="nw")
 
     def start_recording(self) -> None:
         if not self.start_var.get().strip():
-            messagebox.showinfo("éœ€è¦èµ·å§‹è¯»æ•°", "è¯·å…ˆå¡«å†™åƒåˆ†å°ºèµ·å§‹è¯»æ•°ï¼Œå†å¼€å§‹è®°å½•ã€‚")
+            messagebox.showinfo("ÐèÒªÆðÊ¼¶ÁÊý", "ÇëÏÈÌîÐ´Ç§·Ö³ßÆðÊ¼¶ÁÊý£¬ÔÙ¿ªÊ¼¼ÇÂ¼¡£")
             return
         try:
             float(self.start_var.get())
         except ValueError:
-            messagebox.showerror("è¯»æ•°æ ¼å¼é”™è¯¯", "èµ·å§‹è¯»æ•°å¿…é¡»æ˜¯æ•°å­—ï¼Œå•ä½ä¸º mmã€‚")
+            messagebox.showerror("¶ÁÊý¸ñÊ½´íÎó", "ÆðÊ¼¶ÁÊý±ØÐëÊÇÊý×Ö£¬µ¥Î»Îª mm¡£")
             return
         self.timestamps.clear()
         self.intensities.clear()
         self.last_analysis = None
         self.last_wavelength = None
         self.recording = True
-        self.state_var.set("æ­£åœ¨è®°å½•ï¼šè¯·å•å‘ç¼“æ…¢ç§»åŠ¨ M2")
+        self.state_var.set("ÕýÔÚ¼ÇÂ¼£ºÇëµ¥Ïò»ºÂýÒÆ¶¯ M2")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.warning_var.set("ä¿æŒ M2 å•å‘ç§»åŠ¨ï¼›è‹¥æ³¢å½¢å˜åŒ–å¤ªå¯†ï¼Œè¯·ç«‹å³é™ä½Žé€Ÿåº¦ã€‚")
+        self.warning_var.set("±£³Ö M2 µ¥ÏòÒÆ¶¯£»Èô²¨ÐÎ±ä»¯Ì«ÃÜ£¬ÇëÁ¢¼´½µµÍËÙ¶È¡£")
 
     def stop_and_analyze(self) -> None:
         self.recording = False
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.state_var.set("æ­£åœ¨åˆ†æž")
+        self.state_var.set("ÕýÔÚ·ÖÎö")
         try:
             self.last_analysis = analyze_signal(
                 self.timestamps,
@@ -236,25 +241,25 @@ class MichelsonApp:
                 minimum_samples=int(self.measurement_config.get("minimum_samples", 60)),
             )
         except ValueError as error:
-            self.state_var.set("åˆ†æžå¤±è´¥")
+            self.state_var.set("·ÖÎöÊ§°Ü")
             self.warning_var.set(str(error))
-            messagebox.showerror("æ— æ³•åˆ†æž", str(error))
+            messagebox.showerror("ÎÞ·¨·ÖÎö", str(error))
             return
 
         result = self.last_analysis
-        self.result_vars["frames"].set(f"{len(result.timestamps)} å¸§ / {result.duration_s:.2f} s")
+        self.result_vars["frames"].set(f"{len(result.timestamps)} Ö¡ / {result.duration_s:.2f} s")
         self.result_vars["cycles"].set(f"{result.cycles_phase:.3f} / {result.cycles_crossing}")
         self.result_vars["rate"].set(
             f"{result.sample_rate_hz:.1f} fps / {result.median_fringe_hz:.2f} Hz"
         )
         self.result_vars["contrast"].set(f"{result.contrast * 100:.1f}%")
         self.result_vars["quality"].set(result.quality)
-        self.warning_var.set("ï¼›".join(result.warnings) if result.warnings else "æ•°æ®æ£€æŸ¥é€šè¿‡ï¼Œå¯ä»¥è¾“å…¥ç»ˆæ­¢è¯»æ•°è®¡ç®—ã€‚")
-        self.state_var.set("åˆ†æžå®Œæˆ")
+        self.warning_var.set("£»".join(result.warnings) if result.warnings else "Êý¾Ý¼ì²éÍ¨¹ý£¬¿ÉÒÔÊäÈëÖÕÖ¹¶ÁÊý¼ÆËã¡£")
+        self.state_var.set("·ÖÎöÍê³É")
 
     def calculate_and_save(self) -> None:
         if self.last_analysis is None:
-            messagebox.showinfo("å°šæ— åˆ†æžç»“æžœ", "è¯·å…ˆå®Œæˆä¸€æ¬¡è®°å½•å¹¶ç‚¹å‡»â€œåœæ­¢å¹¶åˆ†æžâ€ã€‚")
+            messagebox.showinfo("ÉÐÎÞ·ÖÎö½á¹û", "ÇëÏÈÍê³ÉÒ»´Î¼ÇÂ¼²¢µã»÷¡°Í£Ö¹²¢·ÖÎö¡±¡£")
             return
         try:
             start = float(self.start_var.get())
@@ -272,11 +277,11 @@ class MichelsonApp:
                 cycle_uncertainty=cycle_uncertainty,
             )
         except ValueError as error:
-            messagebox.showerror("æ— æ³•è®¡ç®—", str(error))
+            messagebox.showerror("ÎÞ·¨¼ÆËã", str(error))
             return
 
         result = self.last_wavelength
-        uncertainty = "" if result.uncertainty_nm is None else f" Â± {result.uncertainty_nm:.3f}"
+        uncertainty = "" if result.uncertainty_nm is None else f" ¡À {result.uncertainty_nm:.3f}"
         self.result_vars["wavelength"].set(f"{result.wavelength_nm:.3f}{uncertainty} nm")
         reference = float(self.measurement_config.get("reference_wavelength_nm", 632.8))
         deviation = (result.wavelength_nm - reference) / reference * 100
@@ -294,8 +299,8 @@ class MichelsonApp:
                 "demo_mode": self.demo_mode,
             },
         )
-        self.state_var.set("ç»“æžœå·²ä¿å­˜")
-        messagebox.showinfo("ä¿å­˜å®Œæˆ", f"æ•°æ®å·²ä¿å­˜ï¼š\n{paths[0]}\n{paths[1]}")
+        self.state_var.set("½á¹ûÒÑ±£´æ")
+        messagebox.showinfo("±£´æÍê³É", f"Êý¾ÝÒÑ±£´æ£º\n{paths[0]}\n{paths[1]}")
 
     def close(self) -> None:
         self.camera.close()
