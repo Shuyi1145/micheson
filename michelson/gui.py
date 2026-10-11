@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .roi import ROI_NAMES, analyze_rois, roi_positions, sample_rois
+from .preview import morphology_preview
 from .signal import calculate_wavelength
 from .storage import save_measurement
 
@@ -51,6 +52,9 @@ class MichelsonApp:
         self.display_mapping = None
         self.photo = None
         self.video_item = None
+        self.comparison_photos = [None, None]
+        self.comparison_items = [None, None]
+        self.last_comparison_time = 0.0
         self.after_id = None
         root.title("迈克耳孙干涉测量 - 四点 ROI")
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -79,15 +83,27 @@ class MichelsonApp:
         left = ttk.Frame(content)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(0, weight=3)
-        left.rowconfigure(2, weight=1)
+        left.rowconfigure(1, weight=3)
+        left.rowconfigure(2, weight=2)
+        left.rowconfigure(4, weight=1)
+        ttk.Label(left, text="测量路：原始画面（单击选择中心）").grid(row=0, column=0, sticky="w")
         self.video_canvas = tk.Canvas(left, width=1, height=1, bg="#111111", highlightthickness=0)
-        self.video_canvas.grid(row=0, column=0, sticky="nsew")
+        self.video_canvas.grid(row=1, column=0, sticky="nsew")
         self.video_canvas.bind("<Button-1>", self._select_roi)
+        comparison = ttk.Frame(left)
+        comparison.grid(row=2, column=0, sticky="nsew", pady=(4, 0))
+        comparison.columnconfigure((0, 1), weight=1, uniform="comparison")
+        comparison.rowconfigure(1, weight=1)
+        self.comparison_canvases = []
+        for index, label in enumerate(("显示路：开运算（去小亮点）", "显示路：闭运算（补小断裂）")):
+            ttk.Label(comparison, text=label, font=("sans-serif", 9)).grid(row=0, column=index, sticky="w")
+            canvas = tk.Canvas(comparison, width=1, height=1, bg="#111111", highlightthickness=0)
+            canvas.grid(row=1, column=index, sticky="nsew", padx=(0, 2) if index == 0 else (2, 0))
+            self.comparison_canvases.append(canvas)
         ttk.Label(left, text="单击图像设置中心 | 四点独立波形", font=("sans-serif", 9)).grid(
-            row=1, column=0, sticky="w")
+            row=3, column=0, sticky="w")
         self.wave_canvas = tk.Canvas(left, width=1, height=1, bg="#101820", highlightthickness=0)
-        self.wave_canvas.grid(row=2, column=0, sticky="nsew")
+        self.wave_canvas.grid(row=4, column=0, sticky="nsew")
 
         right = ttk.Frame(content)
         right.grid(row=0, column=1, sticky="nsew")
@@ -144,6 +160,24 @@ class MichelsonApp:
         self.start_entry = self._entry_row(readings, 0, "起始 / mm", self.start_var)
         self._entry_row(readings, 1, "终止 / mm", self.end_var)
         self._entry_row(readings, 2, "分辨率 / um", self.resolution_var)
+
+        processing = ttk.LabelFrame(self.panel, text="显示处理（不参与计数）", padding=6)
+        processing.pack(fill="x", pady=6)
+        self.kernel_var = tk.StringVar(value="3")
+        self.denoise_var = tk.BooleanVar(value=True)
+        self.auto_threshold_var = tk.BooleanVar(value=True)
+        self.threshold_var = tk.StringVar(value="128")
+        ttk.Label(processing, text="核大小 / px").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(processing, textvariable=self.kernel_var, values=(1, 3, 5, 7),
+                     state="readonly", width=6).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(processing, text="3x3 中值降噪", variable=self.denoise_var).grid(
+            row=1, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(processing, text="自动二值化阈值", variable=self.auto_threshold_var).grid(
+            row=2, column=0, columnspan=2, sticky="w")
+        self._entry_row(processing, 3, "手动阈值 / 0-255", self.threshold_var)
+        self.processing_var = tk.StringVar(value="两图使用同一二值图；仅作显示")
+        ttk.Label(processing, textvariable=self.processing_var, wraplength=240).grid(
+            row=4, column=0, columnspan=2, sticky="w")
 
         actions = ttk.Frame(right, padding=(0, 5, 0, 0))
         actions.grid(row=1, column=0, columnspan=2, sticky="ew")
@@ -298,6 +332,41 @@ class MichelsonApp:
         else:
             self.video_canvas.coords(self.video_item, x0, y0)
             self.video_canvas.itemconfigure(self.video_item, image=self.photo)
+        now = time.monotonic()
+        # Keep expensive display processing out of the acquisition thread.
+        if now - self.last_comparison_time >= 0.125:
+            self._display_comparison(frame)
+            self.last_comparison_time = now
+
+    def _display_comparison(self, frame):
+        try:
+            threshold = None if self.auto_threshold_var.get() else float(self.threshold_var.get())
+            result = morphology_preview(frame, kernel_size=int(self.kernel_var.get()),
+                                        denoise=self.denoise_var.get(), threshold=threshold)
+        except (ValueError, tk.TclError, cv2.error) as error:
+            self.processing_var.set(f"显示参数无效：{error}")
+            for canvas in self.comparison_canvases:
+                canvas.delete("all")
+            self.comparison_items = [None, None]
+            self.comparison_photos = [None, None]
+            return
+        self.processing_var.set(f"二值化阈值：{result.threshold:.1f}；仅显示，不参与计数")
+        for index, pixels in enumerate((result.opening, result.closing)):
+            canvas = self.comparison_canvases[index]
+            cw, ch = max(1, canvas.winfo_width()), max(1, canvas.winfo_height())
+            height, width = pixels.shape
+            scale = min(cw / width, ch / height)
+            tw, th = max(1, int(width * scale)), max(1, int(height * scale))
+            # Nearest-neighbor preserves binary black/white instead of inventing gray edges.
+            nearest = getattr(Image, "Resampling", Image).NEAREST
+            photo = ImageTk.PhotoImage(Image.fromarray(pixels).resize((tw, th), nearest))
+            self.comparison_photos[index] = photo
+            x0, y0 = (cw - tw) // 2, (ch - th) // 2
+            if self.comparison_items[index] is None:
+                self.comparison_items[index] = canvas.create_image(x0, y0, image=photo, anchor="nw")
+            else:
+                canvas.coords(self.comparison_items[index], x0, y0)
+                canvas.itemconfigure(self.comparison_items[index], image=photo)
 
     def _draw_waveform(self, samples):
         canvas = self.wave_canvas

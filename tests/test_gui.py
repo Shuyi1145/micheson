@@ -36,6 +36,15 @@ class SmallScreenTests(unittest.TestCase):
                         self.assertLessEqual(bottom, root.winfo_rooty() + root.winfo_height())
                     self.assertGreater(app.video_canvas.winfo_height(), 50)
                     self.assertEqual(len(app.points), 4)
+                    self.assertEqual(len(app.comparison_canvases), 2)
+                    self.assertTrue(all(photo is not None for photo in app.comparison_photos))
+                    self.assertLess(app.video_canvas.winfo_rooty(),
+                                    app.comparison_canvases[0].winfo_rooty())
+                    # Invalid display settings must not stop measurement.
+                    app.auto_threshold_var.set(False)
+                    app.threshold_var.set("invalid")
+                    app._display_comparison(app.latest[0])
+                    app.threshold_var.set("128")
                     self.assertLess(app.panel_canvas.yview()[1], 1.0)
                     app.toggle_fullscreen()
                     self.assertTrue(app.fullscreen)
@@ -56,6 +65,8 @@ class SmallScreenTests(unittest.TestCase):
                     app.calculate_and_save()
                     self.assertAlmostEqual(app.last_wavelength.wavelength_nm, 632.8, places=5)
                     self.assertEqual(len(app.video_canvas.find_all()), 1)
+                    for canvas in app.comparison_canvases:
+                        self.assertEqual(len(canvas.find_all()), 1)
                     self.assertFalse(dialog.called)
                 except Exception as error:
                     errors.append(error)
