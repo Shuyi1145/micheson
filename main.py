@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="图传监听地址；局域网用 0.0.0.0")
     parser.add_argument("--port", type=int, default=8080, help="图传端口，默认 8080")
     parser.add_argument("--video", help="逐帧分析本地视频并导出原图/开闭运算对比")
+    parser.add_argument("--play-video", help="循环播放本地视频演示，可与 --web 配合")
     parser.add_argument("--roi-center", type=int, nargs=2, metavar=("X", "Y"), help="原视频像素坐标")
     parser.add_argument("--video-start", type=float, default=0, help="视频分析起点 / s")
     parser.add_argument("--video-end", type=float, help="视频分析终点 / s")
@@ -36,6 +37,8 @@ def main() -> None:
         parser.error("端口必须在 1-65535 范围内")
 
     config = load_config(args.config)
+    if args.play_video and (args.video or args.demo or args.camera is not None):
+        parser.error("--play-video 不能与 --video/--demo/--camera 混用")
     if args.video:
         if args.demo or args.web or args.headless or args.camera is not None:
             parser.error("视频离线分析不能与 demo/web/headless/camera 混用")
@@ -50,12 +53,19 @@ def main() -> None:
         return
     if args.camera is not None:
         config["camera"]["index"] = args.camera
-    camera = DemoCamera(config["camera"]) if args.demo else UsbCamera(config["camera"])
+    if args.play_video:
+        from michelson.playback import VideoPlayback
+        camera = VideoPlayback(args.play_video)
+    else:
+        camera = DemoCamera(config["camera"]) if args.demo else UsbCamera(config["camera"])
+    source = camera
     server = None
     try:
         if args.web:
             from michelson.webstream import FrameRelay, PreviewServer, StreamCamera
             relay = FrameRelay()
+            if args.play_video:
+                relay.source_info = source.playback_info
             server = PreviewServer(relay, args.host, args.port)
             camera = StreamCamera(camera, relay)
             server.start()
@@ -71,11 +81,15 @@ def main() -> None:
                     time.sleep(0.1)
         else:
             from michelson.gui import run_gui
-            run_gui(camera, config, demo_mode=args.demo)
+            run_gui(camera, config, demo_mode=args.demo,
+                    playback=source if args.play_video else None,
+                    center=None if args.roi_center is None else tuple(args.roi_center))
     except KeyboardInterrupt:
         pass
     finally:
         camera.close()
+        if args.play_video:
+            source.release()
         if server is not None:
             server.close()
 

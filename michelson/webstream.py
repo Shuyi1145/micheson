@@ -25,6 +25,7 @@ class FrameRelay:
         self.jpeg = None
         self.jpeg_sequence = 0
         self.closed = False
+        self.source_info = None
 
     def offer(self, frame):
         with self.condition:
@@ -43,8 +44,11 @@ class FrameRelay:
     def status(self):
         with self.condition:
             age = time.monotonic() - self.received_at if self.received_at else None
-            return {"healthy": not self.closed and not self.error and age is not None and age < 3,
-                    "error": self.error, "age_s": age, "frame": self.jpeg_sequence}
+            result = {"healthy": not self.closed and not self.error and age is not None and age < 3,
+                      "error": self.error, "age_s": age, "frame": self.jpeg_sequence}
+        if self.source_info is not None:
+            result["playback"] = self.source_info()
+        return result
 
 
 class StreamCamera:

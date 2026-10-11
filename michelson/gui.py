@@ -23,13 +23,15 @@ _BGR = ((80, 220, 80), (240, 160, 80), (80, 80, 240), (220, 220, 60))
 
 
 class MichelsonApp:
-    def __init__(self, root, camera, config, *, demo_mode=False):
+    def __init__(self, root, camera, config, *, demo_mode=False, playback=None, center=None):
         self.root, self.camera, self.config = root, camera, config
         self.demo_mode = demo_mode
+        self.playback = playback
+        self.playback_pass = 0
         self.settings = config["measurement"]
         self.radius = max(1, int(self.settings.get("roi_radius_px", 8)))
         self.offset = max(2 * self.radius + 1, int(self.settings.get("roi_offset_px", 40)))
-        self.center = None
+        self.center = center
         self.shape = None
         self.points = None
         self.recording = False
@@ -61,6 +63,10 @@ class MichelsonApp:
         root.bind("<F11>", self.toggle_fullscreen)
         root.bind("<Escape>", self.exit_fullscreen)
         self._build_ui()
+        if playback is not None:
+            root.title("迈克耳孙 - 视频播放演示")
+            self.start_button.configure(state="disabled")
+            self.warning_var.set("视频循环播放，仅演示图像与波形；完整计数使用 --video 离线分析。")
         self.worker = threading.Thread(target=self._capture_loop, daemon=True)
         self.worker.start()
         self._update_frame()
@@ -72,6 +78,10 @@ class MichelsonApp:
         header.grid(row=0, column=0, sticky="ew")
         ttk.Label(header, text="四点 ROI 干涉测量", font=("sans-serif", 12, "bold")).pack(side="left")
         ttk.Button(header, text="全屏 F11", command=self.toggle_fullscreen).pack(side="right")
+        if self.playback is not None:
+            self.pause_button = ttk.Button(header, text="暂停", command=self.toggle_playback)
+            self.pause_button.pack(side="right", padx=4)
+            ttk.Button(header, text="从头播放", command=self.restart_playback).pack(side="right")
         self.state_var = tk.StringVar(value="演示模式" if self.demo_mode else "预览中")
         ttk.Label(header, textvariable=self.state_var).pack(side="right", padx=8)
 
@@ -201,6 +211,14 @@ class MichelsonApp:
         self.panel_canvas.itemconfigure(self.panel_item, width=event.width)
         self.warning_label.configure(wraplength=max(160, event.width - 30))
 
+    def toggle_playback(self):
+        paused = self.playback.toggle_pause()
+        self.pause_button.configure(text="继续" if paused else "暂停")
+
+    def restart_playback(self):
+        self.playback.restart()
+        self.pause_button.configure(text="暂停")
+
     def _scroll_panel(self, event):
         # Only scroll when the pointer is inside the right panel.
         widget = event.widget
@@ -267,6 +285,11 @@ class MichelsonApp:
                     continue
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 with self.lock:
+                    if self.playback is not None:
+                        current_pass = self.playback.playback_info()["pass"]
+                        if current_pass != self.playback_pass:
+                            self.preview.clear()
+                            self.playback_pass = current_pass
                     if self.recording and self.shape != gray.shape:
                         raise ValueError("记录中图像尺寸发生变化，请重新采集。")
                     center = self.center or (gray.shape[1] // 2, gray.shape[0] // 2)
@@ -297,6 +320,10 @@ class MichelsonApp:
         if error:
             self.state_var.set("采集异常")
             self.warning_var.set(error)
+        elif self.playback is not None:
+            info = self.playback.playback_info()
+            state = "已暂停" if info["paused"] else "视频演示"
+            self.state_var.set(f"{state} {info['position_s']:.1f}/{info['duration_s']:.1f} s")
         if latest is not None and latest[3] != self.drawn_sequence:
             frame, points, values, sequence, offset = latest
             self._display_video(frame, points)
@@ -388,6 +415,8 @@ class MichelsonApp:
                                fill=color, anchor="nw")
 
     def start_recording(self):
+        if self.playback is not None:
+            return
         try:
             start = float(self.start_var.get())
             if not np.isfinite(start):
@@ -499,15 +528,17 @@ class MichelsonApp:
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)
         self.stop_event.set()
-        self.worker.join(timeout=0.5)
+        if self.playback is not None:
+            self.playback.close()
+        self.worker.join(timeout=2)
         self.root.destroy()
 
 
-def run_gui(camera, config, *, demo_mode=False):
+def run_gui(camera, config, *, demo_mode=False, playback=None, center=None):
     root = tk.Tk()
     root.minsize(640, 360)
     width = max(640, min(1200, root.winfo_screenwidth() - 40))
     height = max(360, min(760, root.winfo_screenheight() - 80))
     root.geometry(f"{width}x{height}+10+10")
-    MichelsonApp(root, camera, config, demo_mode=demo_mode)
+    MichelsonApp(root, camera, config, demo_mode=demo_mode, playback=playback, center=center)
     root.mainloop()

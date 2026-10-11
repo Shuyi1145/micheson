@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>迈克耳孙 · 摄像头图传</title>
+<title>迈克耳孙 · 图像演示</title>
 <style>
 body{margin:0;background:#0b1220;color:#e2e8f0;font:16px system-ui,sans-serif}
 main{max-width:960px;margin:auto;padding:20px}h1{font-size:24px;margin:0 0 8px}
@@ -13,10 +13,10 @@ img{display:block;width:100%;height:auto;min-height:100px}button{padding:8px 16p
 #offline[hidden]{display:none}.note{font-size:14px}
 </style>
 <main>
-<h1>迈克耳孙 · 摄像头图传</h1>
+<h1>迈克耳孙 · 图像演示</h1>
 <p>上方：原始测量画面　｜　下方左：开运算　｜　下方右：闭运算</p>
 <div id="status" role="status">正在连接香橙派…</div>
-<div class="video"><img id="video" alt="原始画面与开、闭运算实时对比"><div id="offline">正在等待摄像头画面…</div></div>
+<div class="video"><img id="video" alt="原始画面与开、闭运算实时对比"><div id="offline">正在等待图像源…</div></div>
 <p class="note">只读预览，不在浏览器中计数。显示处理采用默认 3×3 中值降噪、自动阈值和 3 像素椭圆核，与桌面显示参数独立。JPEG 压缩图像不能作为原始测量数据。</p>
 <button id="reconnect">重新连接</button>
 </main>
@@ -29,8 +29,8 @@ document.getElementById('reconnect').onclick=connect;
 async function poll(){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);
  try{const r=await fetch('/status',{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error('HTTP '+r.status);
- const s=await r.json();offline.hidden=s.healthy&&!streamError;
- status.textContent=s.healthy?'正在接收 · 最近采集 '+s.age_s.toFixed(1)+' 秒前 · 图传约 8 帧/秒':'采集异常：'+(s.error||'超过 3 秒没有新帧');
+ const s=await r.json(),p=s.playback;offline.hidden=(s.healthy||(p&&p.paused))&&!streamError;
+ status.textContent=p&&(s.healthy||p.paused)?'视频回放演示 · '+p.name+' · '+p.position_s.toFixed(1)+' / '+p.duration_s.toFixed(1)+' 秒 · 第 '+p.pass+' 遍'+(p.paused?' · 已暂停':' · 循环播放'):s.healthy?'正在接收 · 最近采集 '+s.age_s.toFixed(1)+' 秒前 · 图传约 8 帧/秒':'采集异常：'+(s.error||'超过 3 秒没有新帧');
  if(!s.healthy)offline.textContent='没有实时画面：'+(s.error||'摄像头超时');
  }catch(e){offline.hidden=false;offline.textContent='无法连接香橙派，请检查网络和程序';status.textContent='连接中断';}
  clearTimeout(timer);setTimeout(poll,1000);
