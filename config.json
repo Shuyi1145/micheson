@@ -1,4 +1,16 @@
 {
+  "video": {
+    "path": "拍摄视频.mp4",
+    "center_px": [720, 290],
+    "start_reading_cm": 52.82525,
+    "end_reading_cm": 52.82692,
+    "reading_source": "reference-based estimate subsequently confirmed by user"
+  },
+  "preview": {
+    "threshold": null,
+    "kernel_size": 3,
+    "denoise": true
+  },
   "camera": {
     "index": 0,
     "width": 640,

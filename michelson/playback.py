@@ -1,5 +1,5 @@
 # -*- coding: gb2312 -*-
-"""Paced looping video source, for demonstration rather than measurement."""
+"""Paced preview plus one-pass recording using source video timestamps."""
 import math
 import threading
 import time
@@ -32,6 +32,12 @@ class VideoPlayback:
         self.pass_number = 1
         self.next_frame = 0.0
         self.frame_index = 0
+        self.measurement_token = 0
+        self.requested_measurement = 0
+        self.active_measurement = 0
+        self.completed_measurement = 0
+        self.stop_at_end = False
+        self.previous_media_s = -1.0
 
     def toggle_pause(self):
         with self.control:
@@ -43,14 +49,34 @@ class VideoPlayback:
         # Only the read owner touches the decoder, avoiding seek/read races.
         with self.control:
             self.restart_requested.set()
+            self.requested_measurement = 0
+            self.stop_at_end = False
             self.paused = False
             self.control.notify_all()
+
+    def begin_measurement(self):
+        with self.control:
+            self.measurement_token += 1
+            self.requested_measurement = self.measurement_token
+            self.completed_measurement = 0
+            self.restart_requested.set()
+            self.paused = False
+            self.control.notify_all()
+            return self.measurement_token
+
+    def cancel_measurement(self):
+        with self.control:
+            self.stop_at_end = False
+            self.requested_measurement = 0
+            self.active_measurement = 0
 
     def playback_info(self):
         with self.control:
             return {"name": self.path.name, "position_s": self.position_s,
                     "duration_s": self.frames / self.fps,
-                    "pass": self.pass_number, "paused": self.paused}
+                    "pass": self.pass_number, "paused": self.paused,
+                    "active_measurement": self.active_measurement,
+                    "completed_measurement": self.completed_measurement}
 
     def _rewind(self):
         with self.decoder_lock:
@@ -60,6 +86,7 @@ class VideoPlayback:
             self.frame_index = 0
             self.position_s = 0.0
             self.pass_number += 1
+            self.previous_media_s = -1.0
         self.next_frame = 0.0
 
     def read(self):
@@ -70,7 +97,11 @@ class VideoPlayback:
         if self.closed.is_set():
             return False, None, time.perf_counter()
         if self.restart_requested.is_set():
-            self.restart_requested.clear()
+            with self.control:
+                self.restart_requested.clear()
+                self.active_measurement = self.requested_measurement
+                self.stop_at_end = bool(self.active_measurement)
+                self.requested_measurement = 0
             self._rewind()
         while self.next_frame > time.perf_counter():
             if self.closed.wait(self.next_frame - time.perf_counter()):
@@ -80,6 +111,12 @@ class VideoPlayback:
         if not ok:
             if self.frames <= 0 or self.frame_index < self.frames:
                 raise ValueError("Video decode failed before end of file")
+            with self.control:
+                if self.stop_at_end:
+                    self.completed_measurement = self.active_measurement
+                    self.stop_at_end = False
+                    self.paused = True
+                    return False, None, time.perf_counter()
             self._rewind()
             with self.decoder_lock:
                 ok, frame = self.capture.read()
@@ -87,7 +124,11 @@ class VideoPlayback:
                 raise ValueError("Video contains no readable frames")
         timestamp = time.perf_counter()
         with self.control:
-            self.position_s = self.frame_index / self.fps
+            media_s = float(self.capture.get(cv2.CAP_PROP_POS_MSEC)) / 1000
+            if not math.isfinite(media_s) or media_s < 0 or media_s <= self.previous_media_s:
+                media_s = self.frame_index / self.fps
+            self.position_s = media_s
+            self.previous_media_s = media_s
             self.frame_index += 1
         # Keep every frame; slow decoding slows playback instead of skipping frames.
         self.next_frame = timestamp + 1.0 / self.fps

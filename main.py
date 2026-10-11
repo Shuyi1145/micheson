@@ -17,7 +17,7 @@ def load_config(path: str | Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="迈克耳孙干涉波长视觉测量")
-    parser.add_argument("--config", default="config.json", help="配置文件路径")
+    parser.add_argument("--config", default=str(Path(__file__).with_name("config.json")), help="配置文件路径")
     parser.add_argument("--demo", action="store_true", help="使用合成干涉图样，不连接摄像头")
     parser.add_argument("--camera", type=int, help="临时覆盖 USB 摄像头编号")
     parser.add_argument("--web", action="store_true", help="启用网页图传")
@@ -53,18 +53,30 @@ def main() -> None:
         return
     if args.camera is not None:
         config["camera"]["index"] = args.camera
-    if args.play_video:
+    using_video = not args.demo and args.camera is None
+    if using_video:
         from michelson.playback import VideoPlayback
-        camera = VideoPlayback(args.play_video)
+        video_path = Path(args.play_video or config.get("video", {}).get("path", "拍摄视频.mp4"))
+        if not video_path.is_absolute():
+            video_path = Path(args.config).resolve().parent / video_path
+        camera = VideoPlayback(video_path)
+        configured_path = Path(config.get("video", {}).get("path", "拍摄视频.mp4"))
+        if not configured_path.is_absolute():
+            configured_path = Path(args.config).resolve().parent / configured_path
+        if video_path.resolve() != configured_path.resolve():
+            # A different file must not inherit the current experiment's readings.
+            config = dict(config, video={"path": str(video_path)})
     else:
         camera = DemoCamera(config["camera"]) if args.demo else UsbCamera(config["camera"])
     source = camera
+    from michelson.preview import DisplaySettings
+    display_settings = DisplaySettings(config.get("preview", {}))
     server = None
     try:
         if args.web:
             from michelson.webstream import FrameRelay, PreviewServer, StreamCamera
-            relay = FrameRelay()
-            if args.play_video:
+            relay = FrameRelay(display_settings)
+            if using_video:
                 relay.source_info = source.playback_info
             server = PreviewServer(relay, args.host, args.port)
             camera = StreamCamera(camera, relay)
@@ -82,13 +94,16 @@ def main() -> None:
         else:
             from michelson.gui import run_gui
             run_gui(camera, config, demo_mode=args.demo,
-                    playback=source if args.play_video else None,
-                    center=None if args.roi_center is None else tuple(args.roi_center))
+                    playback=source if using_video else None,
+                    center=tuple(args.roi_center) if args.roi_center else (
+                        tuple(config["video"]["center_px"])
+                        if using_video and config.get("video", {}).get("center_px") else None),
+                    display_settings=display_settings)
     except KeyboardInterrupt:
         pass
     finally:
         camera.close()
-        if args.play_video:
+        if using_video:
             source.release()
         if server is not None:
             server.close()

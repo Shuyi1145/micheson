@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .roi import ROI_NAMES, analyze_rois, roi_positions, sample_rois
-from .preview import morphology_preview
+from .preview import DisplaySettings, morphology_preview
 from .signal import calculate_wavelength
 from .storage import save_measurement
 
@@ -23,11 +23,17 @@ _BGR = ((80, 220, 80), (240, 160, 80), (80, 80, 240), (220, 220, 60))
 
 
 class MichelsonApp:
-    def __init__(self, root, camera, config, *, demo_mode=False, playback=None, center=None):
+    def __init__(self, root, camera, config, *, demo_mode=False, playback=None,
+                 center=None, display_settings=None):
         self.root, self.camera, self.config = root, camera, config
         self.demo_mode = demo_mode
         self.playback = playback
         self.playback_pass = 0
+        self.video_token = None
+        self.video_finished = False
+        self.video_complete = False
+        self.threshold_window = None
+        self.display_settings = display_settings or DisplaySettings(config.get("preview", {}))
         self.settings = config["measurement"]
         self.radius = max(1, int(self.settings.get("roi_radius_px", 8)))
         self.offset = max(2 * self.radius + 1, int(self.settings.get("roi_offset_px", 40)))
@@ -64,9 +70,13 @@ class MichelsonApp:
         root.bind("<Escape>", self.exit_fullscreen)
         self._build_ui()
         if playback is not None:
-            root.title("迈克耳孙 - 视频播放演示")
-            self.start_button.configure(state="disabled")
-            self.warning_var.set("视频循环播放，仅演示图像与波形；完整计数使用 --video 离线分析。")
+            root.title("迈克耳孙 - 视频测量")
+            video = config.get("video", {})
+            self.start_var.set(format(float(video["start_reading_cm"]) * 10, ".12g")
+                               if "start_reading_cm" in video else "")
+            self.end_var.set(format(float(video["end_reading_cm"]) * 10, ".12g")
+                             if "end_reading_cm" in video else "")
+            self.warning_var.set("先选中心；开始记录会从头采集整段视频，结尾自动停止分析。")
         self.worker = threading.Thread(target=self._capture_loop, daemon=True)
         self.worker.start()
         self._update_frame()
@@ -81,7 +91,8 @@ class MichelsonApp:
         if self.playback is not None:
             self.pause_button = ttk.Button(header, text="暂停", command=self.toggle_playback)
             self.pause_button.pack(side="right", padx=4)
-            ttk.Button(header, text="从头播放", command=self.restart_playback).pack(side="right")
+            self.restart_button = ttk.Button(header, text="从头播放", command=self.restart_playback)
+            self.restart_button.pack(side="right")
         self.state_var = tk.StringVar(value="演示模式" if self.demo_mode else "预览中")
         ttk.Label(header, textvariable=self.state_var).pack(side="right", padx=8)
 
@@ -173,10 +184,11 @@ class MichelsonApp:
 
         processing = ttk.LabelFrame(self.panel, text="显示处理（不参与计数）", padding=6)
         processing.pack(fill="x", pady=6)
-        self.kernel_var = tk.StringVar(value="3")
-        self.denoise_var = tk.BooleanVar(value=True)
-        self.auto_threshold_var = tk.BooleanVar(value=True)
-        self.threshold_var = tk.StringVar(value="128")
+        options, _ = self.display_settings.snapshot()
+        self.kernel_var = tk.StringVar(value=str(options["kernel_size"]))
+        self.denoise_var = tk.BooleanVar(value=options["denoise"])
+        self.auto_threshold_var = tk.BooleanVar(value=options["threshold"] is None)
+        self.threshold_var = tk.StringVar(value=str(128 if options["threshold"] is None else options["threshold"]))
         ttk.Label(processing, text="核大小 / px").grid(row=0, column=0, sticky="w")
         ttk.Combobox(processing, textvariable=self.kernel_var, values=(1, 3, 5, 7),
                      state="readonly", width=6).grid(row=0, column=1, sticky="w")
@@ -188,6 +200,10 @@ class MichelsonApp:
         self.processing_var = tk.StringVar(value="两图使用同一二值图；仅作显示")
         ttk.Label(processing, textvariable=self.processing_var, wraplength=240).grid(
             row=4, column=0, columnspan=2, sticky="w")
+        ttk.Button(processing, text="可视化调节二值化阈值", command=self.open_threshold_window).grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=5)
+        for variable in (self.kernel_var, self.denoise_var, self.auto_threshold_var, self.threshold_var):
+            variable.trace_add("write", self.refresh_processing)
 
         actions = ttk.Frame(right, padding=(0, 5, 0, 0))
         actions.grid(row=1, column=0, columnspan=2, sticky="ew")
@@ -216,8 +232,34 @@ class MichelsonApp:
         self.pause_button.configure(text="继续" if paused else "暂停")
 
     def restart_playback(self):
+        if self.recording:
+            return
         self.playback.restart()
         self.pause_button.configure(text="暂停")
+
+    def current_frame(self):
+        with self.lock:
+            return None if self.latest is None else self.latest[0].copy()
+
+    def refresh_processing(self, *args):
+        frame = self.current_frame()
+        if frame is not None:
+            self._display_comparison(frame)
+            self.last_comparison_time = time.monotonic()
+
+    def apply_threshold(self, threshold):
+        self.auto_threshold_var.set(threshold is None)
+        if threshold is not None:
+            self.threshold_var.set(str(int(threshold)))
+        self.refresh_processing()
+
+    def open_threshold_window(self):
+        if self.threshold_window is not None and self.threshold_window.window.winfo_exists():
+            self.threshold_window.window.lift()
+            return
+        from .threshold_ui import ThresholdWindow
+        self.threshold_window = ThresholdWindow(
+            self.root, self.current_frame, self.apply_threshold, self.display_settings)
 
     def _scroll_panel(self, event):
         # Only scroll when the pointer is inside the right panel.
@@ -277,6 +319,14 @@ class MichelsonApp:
             while not self.stop_event.is_set():
                 ok, frame, timestamp = self.camera.read()
                 if not ok or frame is None:
+                    if self.playback is not None:
+                        info = self.playback.playback_info()
+                        if self.video_token and info["completed_measurement"] == self.video_token:
+                            with self.lock:
+                                self.video_finished = True
+                                self.video_complete = True
+                                self.recording = False
+                            continue
                     with self.lock:
                         self.camera_error = "摄像头读取失败"
                         if self.recording:
@@ -286,7 +336,8 @@ class MichelsonApp:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 with self.lock:
                     if self.playback is not None:
-                        current_pass = self.playback.playback_info()["pass"]
+                        info = self.playback.playback_info()
+                        current_pass = info["pass"]
                         if current_pass != self.playback_pass:
                             self.preview.clear()
                             self.playback_pass = current_pass
@@ -300,8 +351,9 @@ class MichelsonApp:
                     self.sequence += 1
                     self.latest = (frame, points, values, self.sequence, actual_offset)
                     self.preview.append(values)
-                    if self.recording:
-                        self.timestamps.append(timestamp)
+                    if self.recording and (self.playback is None or
+                                           info["active_measurement"] == self.video_token):
+                        self.timestamps.append(info["position_s"] if self.playback else timestamp)
                         self.samples.append(values)
         except Exception as error:
             with self.lock:
@@ -317,12 +369,17 @@ class MichelsonApp:
             preview = list(self.preview)
             error = self.camera_error
             count = len(self.timestamps)
+            finished = self.video_finished
+            self.video_finished = False
+        if finished:
+            self.pause_button.configure(text="继续")
+            self.stop_and_analyze()
         if error:
             self.state_var.set("采集异常")
             self.warning_var.set(error)
         elif self.playback is not None:
             info = self.playback.playback_info()
-            state = "已暂停" if info["paused"] else "视频演示"
+            state = "视频记录中" if self.recording else "已暂停" if info["paused"] else "视频预览"
             self.state_var.set(f"{state} {info['position_s']:.1f}/{info['duration_s']:.1f} s")
         if latest is not None and latest[3] != self.drawn_sequence:
             frame, points, values, sequence, offset = latest
@@ -337,6 +394,9 @@ class MichelsonApp:
         if now - self.last_wave_time >= 0.125:
             self._draw_waveform(preview)
             self.last_wave_time = now
+        if latest is not None and now - self.last_comparison_time >= 0.125:
+            self._display_comparison(latest[0])
+            self.last_comparison_time = now
         self.after_id = self.root.after(66, self._update_frame)
 
     def _display_video(self, frame, points):
@@ -370,6 +430,8 @@ class MichelsonApp:
             threshold = None if self.auto_threshold_var.get() else float(self.threshold_var.get())
             result = morphology_preview(frame, kernel_size=int(self.kernel_var.get()),
                                         denoise=self.denoise_var.get(), threshold=threshold)
+            self.display_settings.update(kernel_size=int(self.kernel_var.get()),
+                                         denoise=self.denoise_var.get(), threshold=threshold)
         except (ValueError, tk.TclError, cv2.error) as error:
             self.processing_var.set(f"显示参数无效：{error}")
             for canvas in self.comparison_canvases:
@@ -415,8 +477,6 @@ class MichelsonApp:
                                fill=color, anchor="nw")
 
     def start_recording(self):
-        if self.playback is not None:
-            return
         try:
             start = float(self.start_var.get())
             if not np.isfinite(start):
@@ -436,6 +496,10 @@ class MichelsonApp:
             self.geometry_snapshot = {"center_px": center, "points_px": points,
                                       "offset_px": offset, "radius_px": self.radius}
             self.recording = True
+            self.video_complete = False
+            self.video_finished = False
+            if self.playback is not None:
+                self.video_token = self.playback.begin_measurement()
         self.measurement_start = start
         self.last_multi, self.last_wavelength = None, None
         for variable in self.result_vars.values():
@@ -446,14 +510,23 @@ class MichelsonApp:
         self.start_entry.configure(state="disabled")
         self.offset_spin.configure(state="disabled")
         self.apply_button.configure(state="disabled")
+        if self.playback is not None:
+            self.restart_button.configure(state="disabled")
+            self.pause_button.configure(text="暂停")
         self.state_var.set("记录中")
-        self.warning_var.set("ROI 已锁定；保持单向缓慢移动，四点不能修复混叠漏计。")
+        self.warning_var.set("ROI 已锁定；视频从头采集，到结尾自动分析。" if self.playback else
+                             "ROI 已锁定；保持单向缓慢移动，四点不能修复混叠漏计。")
 
     def stop_and_analyze(self):
         with self.lock:
             self.recording = False
             timestamps, samples = list(self.timestamps), list(self.samples)
             error = self.recording_error or self.camera_error
+        if self.playback is not None:
+            self.playback.cancel_measurement()
+            self.restart_button.configure(state="normal")
+            if not self.video_complete:
+                self.end_var.set("")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.start_entry.configure(state="normal")
@@ -483,7 +556,10 @@ class MichelsonApp:
                 variable.set(f"{label}: 排除 ({result.rejected[name]})")
             elif channel is not None:
                 variable.set(f"{label}: {channel.cycles_phase:.3f} 周期 / 对比度 {channel.contrast:.0%}")
-        self.warning_var.set("；".join(analysis.warnings) or "四点一致性通过；输入终止读数计算。")
+        note = "；".join(analysis.warnings) or "四点一致性通过；输入终止读数计算。"
+        if self.playback is not None and not self.video_complete:
+            note += "；提前停止只测得部分视频，终止读数须对应停止时刻。"
+        self.warning_var.set(note)
         self.state_var.set("分析完成")
         self.save_button.configure(state="normal")
         self.panel_canvas.yview_moveto(0)
@@ -512,6 +588,16 @@ class MichelsonApp:
                         "rejected_rois": self.last_multi.rejected,
                         "representative_roi": self.last_multi.representative,
                         "uncertainty_note": "尚无完整标定，不报告合成不确定度"}
+            if self.playback is not None:
+                video = self.config.get("video", {})
+                same_readings = ("start_reading_cm" in video and "end_reading_cm" in video
+                                 and abs(self.measurement_start - float(video["start_reading_cm"]) * 10) < 1e-9
+                                 and abs(end - float(video["end_reading_cm"]) * 10) < 1e-9)
+                metadata.update(source_type="video", source_video=str(self.playback.path),
+                                video_complete=self.video_complete,
+                                timestamp_basis="video presentation time; frame/FPS fallback",
+                                reading_source=video.get("reading_source", "user input")
+                                if same_readings else "user input")
             paths = save_measurement(self.config.get("output_directory", "data"),
                 self.last_multi.analysis, result, metadata,
                 channels=self.last_multi.channels,
@@ -528,17 +614,20 @@ class MichelsonApp:
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)
         self.stop_event.set()
+        if self.threshold_window is not None:
+            self.threshold_window.close()
         if self.playback is not None:
             self.playback.close()
         self.worker.join(timeout=2)
         self.root.destroy()
 
 
-def run_gui(camera, config, *, demo_mode=False, playback=None, center=None):
+def run_gui(camera, config, *, demo_mode=False, playback=None, center=None, display_settings=None):
     root = tk.Tk()
     root.minsize(640, 360)
     width = max(640, min(1200, root.winfo_screenwidth() - 40))
     height = max(360, min(760, root.winfo_screenheight() - 80))
     root.geometry(f"{width}x{height}+10+10")
-    MichelsonApp(root, camera, config, demo_mode=demo_mode, playback=playback, center=center)
+    MichelsonApp(root, camera, config, demo_mode=demo_mode, playback=playback,
+                 center=center, display_settings=display_settings)
     root.mainloop()

@@ -1,6 +1,7 @@
 # -*- coding: gb2312 -*-
 """Display-only processing. Never feed these images into measurement."""
 from dataclasses import dataclass
+import threading
 
 import cv2
 import numpy as np
@@ -11,6 +12,29 @@ class MorphologyPreview:
     opening: np.ndarray
     closing: np.ndarray
     threshold: float
+    binary: np.ndarray
+
+
+class DisplaySettings:
+    """Thread-safe display options shared by Tk and web encoding."""
+
+    def __init__(self, options=None):
+        self.lock = threading.Lock()
+        self.options = {"kernel_size": 3, "denoise": True, "threshold": None}
+        self.revision = 0
+        self.update(**(options or {}))
+
+    def update(self, **options):
+        with self.lock:
+            candidate = dict(self.options, **options)
+            morphology_preview(np.zeros((1, 1, 3), np.uint8), **candidate)
+            if candidate != self.options:
+                self.options = candidate
+                self.revision += 1
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.options), self.revision
 
 
 def morphology_preview(frame, *, kernel_size=3, denoise=True, threshold=None):
@@ -35,4 +59,5 @@ def morphology_preview(frame, *, kernel_size=3, denoise=True, threshold=None):
         cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel),
         cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel),
         float(used_threshold),
+        binary,
     )

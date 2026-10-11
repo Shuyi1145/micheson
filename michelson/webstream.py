@@ -10,13 +10,13 @@ from urllib.parse import urlsplit
 import cv2
 import numpy as np
 
-from .preview import morphology_preview
+from .preview import DisplaySettings, morphology_preview
 
 
 class FrameRelay:
     """Bounded latest-frame slot; only the camera owner calls offer()."""
 
-    def __init__(self):
+    def __init__(self, display_settings=None):
         self.condition = threading.Condition()
         self.frame = None
         self.sequence = 0
@@ -26,6 +26,7 @@ class FrameRelay:
         self.jpeg_sequence = 0
         self.closed = False
         self.source_info = None
+        self.display_settings = display_settings or DisplaySettings()
 
     def offer(self, frame):
         with self.condition:
@@ -48,6 +49,7 @@ class FrameRelay:
                       "error": self.error, "age_s": age, "frame": self.jpeg_sequence}
         if self.source_info is not None:
             result["playback"] = self.source_info()
+        result["display_options"] = self.display_settings.snapshot()[0]
         return result
 
 
@@ -63,7 +65,9 @@ class StreamCamera:
         if ok and frame is not None:
             self.relay.offer(frame)
         else:
-            self.relay.fail("Camera read failed")
+            info = self.relay.source_info() if self.relay.source_info else {}
+            if not info.get("paused"):
+                self.relay.fail("Image source read failed")
         return result
 
     def status(self):
@@ -74,13 +78,13 @@ class StreamCamera:
         self.camera.close()
 
 
-def encode_comparison(frame):
+def encode_comparison(frame, **options):
     """Fixed display size bounds network cost; never replace the capture frame."""
     height, width = frame.shape[:2]
     scale = min(1.0, 640 / width, 480 / height)
     raw = cv2.resize(frame, (max(2, int(width * scale)), max(2, int(height * scale))),
                      interpolation=cv2.INTER_AREA)
-    result = morphology_preview(raw)
+    result = morphology_preview(raw, **options)
     h, w = raw.shape[:2]
     half = w // 2
     comparison_height = max(1, round(h * half / w))
@@ -158,6 +162,10 @@ class PreviewServer:
                             jpeg, sequence = relay.jpeg, relay.jpeg_sequence
                             healthy = (not relay.error and time.monotonic() - relay.received_at < 3)
                         if not healthy or jpeg is None or sequence == last:
+                            paused = relay.source_info and relay.source_info().get("paused")
+                            if paused and jpeg is not None and sequence != last:
+                                healthy = True
+                        if not healthy or jpeg is None or sequence == last:
                             owner.stop.wait(0.05)
                             continue
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
@@ -182,19 +190,22 @@ class PreviewServer:
 
     def _encode_loop(self):
         last = -1
+        last_revision = -1
         while not self.stop.is_set():
             with self.relay.condition:
                 frame, sequence = self.relay.frame, self.relay.sequence
-            if frame is not None and sequence != last:
+            options, revision = self.relay.display_settings.snapshot()
+            if frame is not None and (sequence != last or revision != last_revision):
                 try:
-                    jpeg = encode_comparison(frame)
+                    jpeg = encode_comparison(frame, **options)
                     with self.relay.condition:
                         self.relay.jpeg = jpeg
-                        self.relay.jpeg_sequence = sequence
+                        self.relay.jpeg_sequence += 1
                         self.relay.condition.notify_all()
                 except (ValueError, cv2.error) as error:
                     self.relay.fail(str(error))
                 last = sequence
+                last_revision = revision
             self.stop.wait(0.125)
 
     def close(self):

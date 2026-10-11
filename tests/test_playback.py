@@ -107,9 +107,7 @@ class PlaybackTests(unittest.TestCase):
                 self.assertIsNotNone(app.latest)
                 self.assertIsNotNone(app.photo)
                 self.assertTrue(all(p is not None for p in app.comparison_photos))
-                self.assertIn("disabled", app.start_button.state())
-                app.start_recording()
-                self.assertFalse(app.recording)
+                self.assertNotIn("disabled", app.start_button.state())
                 app.toggle_playback()
                 self.assertTrue(source.playback_info()["paused"])
                 app.restart_playback()
@@ -124,6 +122,28 @@ class PlaybackTests(unittest.TestCase):
         self.assertFalse(app.worker.is_alive())
         if errors:
             raise errors[0]
+
+    def test_one_pass_recording_includes_first_and_last_frame(self):
+        source = self.source()
+        source.read()
+        token = source.begin_measurement()
+        frames = [source.read() for _ in range(3)]
+        self.assertEqual([round(float(frame[1].mean())) for frame in frames], [30, 80, 130])
+        self.assertEqual(source.playback_info()["active_measurement"], token)
+        self.assertAlmostEqual(source.playback_info()["position_s"], 2 / 120)
+        self.assertFalse(source.read()[0])
+        self.assertEqual(source.playback_info()["completed_measurement"], token)
+        self.assertTrue(source.playback_info()["paused"])
+
+    def test_default_entrypoint_uses_configured_video(self):
+        import main
+        config = {"video": {"path": str(self.path), "center_px": [32, 24]}, "camera": {}}
+        with patch("sys.argv", ["main.py"]), patch("main.load_config", return_value=config), \
+                patch("main.UsbCamera", side_effect=AssertionError("USB opened")), \
+                patch("michelson.gui.run_gui") as gui:
+            main.main()
+            self.assertEqual(gui.call_args.kwargs["center"], (32, 24))
+            self.assertIsNotNone(gui.call_args.kwargs["playback"])
 
 
 if __name__ == "__main__":
