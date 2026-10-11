@@ -1,0 +1,19 @@
+{
+  "camera": {
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "exposure": null,
+    "gain": null
+  },
+  "measurement": {
+    "roi_radius_px": 8,
+    "reference_wavelength_nm": 632.8,
+    "micrometer_resolution_um": null,
+    "safe_fringe_fraction_of_fps": 0.25,
+    "minimum_samples": 60
+  },
+  "output_directory": "data"
+}
+
