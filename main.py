@@ -1,3 +1,4 @@
+# -*- coding: gb2312 -*-
 from __future__ import annotations
 
 import argparse
@@ -5,28 +6,61 @@ import json
 from pathlib import Path
 
 from michelson.camera import DemoCamera, UsbCamera
-from michelson.gui import run_gui
 
 
 def load_config(path: str | Path) -> dict:
     config_path = Path(path)
     if not config_path.exists():
-        raise FileNotFoundError(f"é…ç½®æ–‡ä»¶ä¸å­˜åœ¨ï¼š{config_path}")
+        raise FileNotFoundError(f"ÅäÖÃÎÄ¼ş²»´æÔÚ£º{config_path}")
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="è¿ˆå…‹è€³å­™å¹²æ¶‰æ³¢é•¿è§†è§‰æµ‹é‡")
-    parser.add_argument("--config", default="config.json", help="é…ç½®æ–‡ä»¶è·¯å¾„")
-    parser.add_argument("--demo", action="store_true", help="ä½¿ç”¨åˆæˆå¹²æ¶‰å›¾æ ·ï¼Œä¸è¿æ¥æ‘„åƒå¤´")
-    parser.add_argument("--camera", type=int, help="ä¸´æ—¶è¦†ç›– USB æ‘„åƒå¤´ç¼–å·")
+    parser = argparse.ArgumentParser(description="Âõ¿Ë¶úËï¸ÉÉæ²¨³¤ÊÓ¾õ²âÁ¿")
+    parser.add_argument("--config", default="config.json", help="ÅäÖÃÎÄ¼şÂ·¾¶")
+    parser.add_argument("--demo", action="store_true", help="Ê¹ÓÃºÏ³É¸ÉÉæÍ¼Ñù£¬²»Á¬½ÓÉãÏñÍ·")
+    parser.add_argument("--camera", type=int, help="ÁÙÊ±¸²¸Ç USB ÉãÏñÍ·±àºÅ")
+    parser.add_argument("--web", action="store_true", help="ÆôÓÃÍøÒ³Í¼´«")
+    parser.add_argument("--headless", action="store_true", help="½öÍ¼´«£¬²»´ò¿ª×ÀÃæ²âÁ¿½çÃæ£¨Ğè --web£©")
+    parser.add_argument("--host", default="127.0.0.1", help="Í¼´«¼àÌıµØÖ·£»¾ÖÓòÍøÓÃ 0.0.0.0")
+    parser.add_argument("--port", type=int, default=8080, help="Í¼´«¶Ë¿Ú£¬Ä¬ÈÏ 8080")
     args = parser.parse_args()
+    if args.headless and not args.web:
+        parser.error("--headless ĞèÒªÍ¬Ê±Ö¸¶¨ --web")
+    if not 1 <= args.port <= 65535:
+        parser.error("¶Ë¿Ú±ØĞëÔÚ 1-65535 ·¶Î§ÄÚ")
 
     config = load_config(args.config)
     if args.camera is not None:
         config["camera"]["index"] = args.camera
     camera = DemoCamera(config["camera"]) if args.demo else UsbCamera(config["camera"])
-    run_gui(camera, config, demo_mode=args.demo)
+    server = None
+    try:
+        if args.web:
+            from michelson.webstream import FrameRelay, PreviewServer, StreamCamera
+            relay = FrameRelay()
+            server = PreviewServer(relay, args.host, args.port)
+            camera = StreamCamera(camera, relay)
+            server.start()
+            print(f"ÍøÒ³Í¼´«¶Ë¿Ú£º{server.address[1]}£»±¾»ú http://127.0.0.1:{server.address[1]}")
+            if args.host == "0.0.0.0":
+                print("¾ÖÓòÍø·ÃÎÊ£ºhttp://Ïã³ÈÅÉIP:" + str(server.address[1]))
+                print("ÎŞµÇÂ¼ÈÏÖ¤£¬½öÏŞ¿ÉĞÅÍøÂç£»²»Òª×ª·¢´Ë¶Ë¿Úµ½¹«Íø¡£")
+        if args.headless:
+            import time
+            while True:
+                ok, _, _ = camera.read()
+                if not ok:
+                    time.sleep(0.1)
+        else:
+            from michelson.gui import run_gui
+            run_gui(camera, config, demo_mode=args.demo)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        camera.close()
+        if server is not None:
+            server.close()
 
 
 if __name__ == "__main__":
