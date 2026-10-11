@@ -1,3 +1,4 @@
+# -*- coding: gb2312 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
 
 
 def _analytic_signal(values: np.ndarray) -> np.ndarray:
-    """ç”¨ FFT æ„é€  Hilbert è§£æä¿¡å·ï¼Œé¿å…åœ¨é¦™æ©™æ´¾ä¸Šä¾èµ– SciPyã€‚"""
+    """ÓÃ FFT ¹¹Ôì Hilbert ½âÎöĞÅºÅ£¬±ÜÃâÔÚÏã³ÈÅÉÉÏÒÀÀµ SciPy¡£"""
     count = len(values)
     spectrum = np.fft.fft(values)
     multiplier = np.zeros(count)
@@ -78,28 +79,28 @@ def analyze_signal(
     safe_fringe_fraction_of_fps: float = 0.25,
     minimum_samples: int = 60,
 ) -> AnalysisResult:
-    """åˆ†æå•è°ƒç§»åŠ¨åå°„é•œæ—¶çš„ä¸­å¿ƒåŒºåŸŸç°åº¦æ³¢å½¢ã€‚
+    """·ÖÎöµ¥µ÷ÒÆ¶¯·´Éä¾µÊ±µÄÖĞĞÄÇøÓò»Ò¶È²¨ĞÎ¡£
 
-    phase å‘¨æœŸæ•°å¯åˆ©ç”¨é¦–å°¾çš„éæ•´æ•°å‘¨æœŸï¼›crossing å‘¨æœŸæ•°ç”¨äºç‹¬ç«‹äº¤å‰æ£€æŸ¥ã€‚
-    å•é€šé“å¼ºåº¦æ— æ³•åˆ¤æ–­åå°„é•œè¿åŠ¨æ–¹å‘ï¼Œå› æ­¤å®éªŒè¿‡ç¨‹ä¸­å¿…é¡»ä¿æŒå•å‘ç§»åŠ¨ã€‚
+    phase ÖÜÆÚÊı¿ÉÀûÓÃÊ×Î²µÄ·ÇÕûÊıÖÜÆÚ£»crossing ÖÜÆÚÊıÓÃÓÚ¶ÀÁ¢½»²æ¼ì²é¡£
+    µ¥Í¨µÀÇ¿¶ÈÎŞ·¨ÅĞ¶Ï·´Éä¾µÔË¶¯·½Ïò£¬Òò´ËÊµÑé¹ı³ÌÖĞ±ØĞë±£³Öµ¥ÏòÒÆ¶¯¡£
     """
     times = np.asarray(timestamps, dtype=float)
     raw = np.asarray(intensities, dtype=float)
     valid = np.isfinite(times) & np.isfinite(raw)
     times, raw = times[valid], raw[valid]
     if len(times) < minimum_samples:
-        raise ValueError(f"æœ‰æ•ˆæ ·æœ¬ä¸è¶³ï¼šè‡³å°‘éœ€è¦ {minimum_samples} å¸§ï¼Œå½“å‰ {len(times)} å¸§ã€‚")
+        raise ValueError(f"ÓĞĞ§Ñù±¾²»×ã£ºÖÁÉÙĞèÒª {minimum_samples} Ö¡£¬µ±Ç° {len(times)} Ö¡¡£")
     if np.any(np.diff(times) <= 0):
         order = np.argsort(times)
         times, raw = times[order], raw[order]
         unique = np.concatenate(([True], np.diff(times) > 0))
         times, raw = times[unique], raw[unique]
     if len(times) < minimum_samples:
-        raise ValueError("å»é™¤é‡å¤æ—¶é—´æˆ³åï¼Œæœ‰æ•ˆæ ·æœ¬ä¸è¶³ã€‚")
+        raise ValueError("È¥³ıÖØ¸´Ê±¼ä´Áºó£¬ÓĞĞ§Ñù±¾²»×ã¡£")
 
     duration = float(times[-1] - times[0])
     if duration <= 0:
-        raise ValueError("é‡‡é›†æ—¶é•¿å¿…é¡»å¤§äºé›¶ã€‚")
+        raise ValueError("²É¼¯Ê±³¤±ØĞë´óÓÚÁã¡£")
     uniform_times = np.linspace(times[0], times[-1], len(times))
     uniform_raw = np.interp(uniform_times, times, raw)
     sample_rate = float((len(times) - 1) / duration)
@@ -117,7 +118,7 @@ def analyze_signal(
     low, high = np.percentile(detrended, [5, 95])
     amplitude = float((high - low) / 2)
     if amplitude < 1e-9:
-        raise ValueError("ç°åº¦å˜åŒ–è¿‡å°ï¼Œæ— æ³•è¯†åˆ«å¹²æ¶‰å‘¨æœŸã€‚")
+        raise ValueError("»Ò¶È±ä»¯¹ıĞ¡£¬ÎŞ·¨Ê¶±ğ¸ÉÉæÖÜÆÚ¡£")
     filtered = detrended / amplitude
 
     analytic = _analytic_signal(filtered)
@@ -147,25 +148,27 @@ def analyze_signal(
 
     warnings: list[str] = []
     if contrast < 0.08:
-        warnings.append("æ¡çº¹å¯¹æ¯”åº¦åä½ï¼›è¯·æ”¹å–„å‡†ç›´ã€å‡å°ç¯å¢ƒå…‰æˆ–è°ƒæ•´æ›å…‰ã€‚")
+        warnings.append("ÌõÎÆ¶Ô±È¶ÈÆ«µÍ£»Çë¸ÄÉÆ×¼Ö±¡¢¼õĞ¡»·¾³¹â»òµ÷ÕûÆØ¹â¡£")
     safe_frequency = sample_rate * safe_fringe_fraction_of_fps
     if maximum_fringe_hz > safe_frequency:
         warnings.append(
-            f"å±€éƒ¨æ¡çº¹é¢‘ç‡è¾¾åˆ° {maximum_fringe_hz:.2f} Hzï¼Œè¶…è¿‡å½“å‰å¸§ç‡çš„å®‰å…¨èŒƒå›´ï¼›å¯èƒ½æ¼è®¡ã€‚"
+            f"¾Ö²¿ÌõÎÆÆµÂÊ´ïµ½ {maximum_fringe_hz:.2f} Hz£¬³¬¹ıµ±Ç°Ö¡ÂÊµÄ°²È«·¶Î§£»¿ÉÄÜÂ©¼Æ¡£"
         )
     disagreement = abs(cycles_phase - cycles_crossing)
-    tolerance = max(1.0, 0.05 * max(cycles_phase, 1.0))
+    # Crossing count spans only the first to last detected crossing; two partial
+    # endpoint cycles can be missing without indicating an acquisition failure.
+    tolerance = max(2.0, 0.05 * max(cycles_phase, 1.0))
     if disagreement > tolerance:
-        warnings.append("ç›¸ä½æ³•ä¸è¿‡é›¶è®¡æ•°å·®å¼‚è¾ƒå¤§ï¼›å¯èƒ½å­˜åœ¨è¿åŠ¨åå‘ã€æ›å…‰å˜åŒ–æˆ–æ¼å¸§ã€‚")
+        warnings.append("ÏàÎ»·¨Óë¹ıÁã¼ÆÊı²îÒì½Ï´ó£»¿ÉÄÜ´æÔÚÔË¶¯·´Ïò¡¢ÆØ¹â±ä»¯»òÂ©Ö¡¡£")
     if cycles_phase < 5:
-        warnings.append("æœ‰æ•ˆå‘¨æœŸæ•°è¿‡å°‘ï¼›å»ºè®®æ‰©å¤§å•å‘ä½ç§»ä»¥é™ä½è®¡æ•°ç›¸å¯¹è¯¯å·®ã€‚")
+        warnings.append("ÓĞĞ§ÖÜÆÚÊı¹ıÉÙ£»½¨ÒéÀ©´óµ¥ÏòÎ»ÒÆÒÔ½µµÍ¼ÆÊıÏà¶ÔÎó²î¡£")
 
-    if any("å¯èƒ½æ¼è®¡" in item or "å·®å¼‚è¾ƒå¤§" in item for item in warnings):
-        quality = "éœ€å¤æ ¸"
+    if any("¿ÉÄÜÂ©¼Æ" in item or "²îÒì½Ï´ó" in item for item in warnings):
+        quality = "Ğè¸´ºË"
     elif warnings:
-        quality = "å¯ç”¨"
+        quality = "¿ÉÓÃ"
     else:
-        quality = "è‰¯å¥½"
+        quality = "Á¼ºÃ"
 
     return AnalysisResult(
         timestamps=uniform_times - uniform_times[0],
@@ -193,15 +196,15 @@ def calculate_wavelength(
     cycle_uncertainty: float | None = None,
 ) -> WavelengthResult:
     if cycles <= 0:
-        raise ValueError("å‘¨æœŸæ•°å¿…é¡»å¤§äºé›¶ã€‚")
+        raise ValueError("ÖÜÆÚÊı±ØĞë´óÓÚÁã¡£")
     displacement_mm = abs(float(end_reading_mm) - float(start_reading_mm))
     if displacement_mm <= 0:
-        raise ValueError("åƒåˆ†å°ºèµ·å§‹è¯»æ•°ä¸ç»ˆæ­¢è¯»æ•°ä¸èƒ½ç›¸åŒã€‚")
+        raise ValueError("Ç§·Ö³ßÆğÊ¼¶ÁÊıÓëÖÕÖ¹¶ÁÊı²»ÄÜÏàÍ¬¡£")
     wavelength_nm = 2.0 * displacement_mm * 1_000_000.0 / cycles
 
     uncertainty_nm: float | None = None
     if micrometer_resolution_um is not None and micrometer_resolution_um > 0:
-        # å•æ¬¡è¯»æ•°æŒ‰å‡åŒ€åˆ†å¸ƒä¼°è®¡ï¼Œä½ç§»ç”±ä¸¤æ¬¡ç‹¬ç«‹è¯»æ•°ä¹‹å·®å¾—åˆ°ã€‚
+        # µ¥´Î¶ÁÊı°´¾ùÔÈ·Ö²¼¹À¼Æ£¬Î»ÒÆÓÉÁ½´Î¶ÀÁ¢¶ÁÊıÖ®²îµÃµ½¡£
         sigma_d_mm = np.sqrt(2.0) * (micrometer_resolution_um / 1000.0) / np.sqrt(12.0)
         sigma_n = 0.25 if cycle_uncertainty is None else max(float(cycle_uncertainty), 0.0)
         relative = np.sqrt((sigma_d_mm / displacement_mm) ** 2 + (sigma_n / cycles) ** 2)

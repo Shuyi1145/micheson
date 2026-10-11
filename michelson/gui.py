@@ -1,314 +1,444 @@
 # -*- coding: gb2312 -*-
 from __future__ import annotations
 
-import math
+import threading
+import time
 import tkinter as tk
 from collections import deque
-from pathlib import Path
 from tkinter import messagebox, ttk
 
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-from .signal import AnalysisResult, WavelengthResult, analyze_signal, calculate_wavelength
+from .roi import ROI_NAMES, analyze_rois, roi_positions, sample_rois
+from .signal import calculate_wavelength
 from .storage import save_measurement
 
-
-# Ubuntu 22.04 的 Pillow 9.0 使用旧常量，新版本优先使用枚举。
 _BILINEAR = getattr(Image, "Resampling", Image).BILINEAR
+_LABELS = ("上", "右", "下", "左")
+_COLORS = ("#4ade80", "#60a5fa", "#f87171", "#22d3ee")
+_BGR = ((80, 220, 80), (240, 160, 80), (80, 80, 240), (220, 220, 60))
 
 
 class MichelsonApp:
-    def __init__(self, root: tk.Tk, camera, config: dict, *, demo_mode: bool = False):
-        self.root = root
-        self.camera = camera
-        self.config = config
+    def __init__(self, root, camera, config, *, demo_mode=False):
+        self.root, self.camera, self.config = root, camera, config
         self.demo_mode = demo_mode
-        self.measurement_config = config["measurement"]
+        self.settings = config["measurement"]
+        self.radius = max(1, int(self.settings.get("roi_radius_px", 8)))
+        self.offset = max(2 * self.radius + 1, int(self.settings.get("roi_offset_px", 40)))
+        self.center = None
+        self.shape = None
+        self.points = None
         self.recording = False
-        self.timestamps: list[float] = []
-        self.intensities: list[float] = []
-        self.preview_values: deque[float] = deque(maxlen=360)
-        self.roi_center: tuple[int, int] | None = None
-        self.last_frame_shape: tuple[int, int] | None = None
-        self.last_analysis: AnalysisResult | None = None
-        self.last_wavelength: WavelengthResult | None = None
-        self.photo: ImageTk.PhotoImage | None = None
-        self.video_item: int | None = None
-
-        self.root.title("迈克耳孙干涉波长测量")
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.closed = False
+        self.fullscreen = False
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.timestamps, self.samples = [], []
+        self.preview = deque(maxlen=360)
+        self.latest = None
+        self.camera_error = ""
+        self.recording_error = ""
+        self.sequence = 0
+        self.drawn_sequence = -1
+        self.last_wave_time = 0.0
+        self.last_multi = None
+        self.last_wavelength = None
+        self.measurement_start = None
+        self.geometry_snapshot = None
+        self.display_mapping = None
+        self.photo = None
+        self.video_item = None
+        self.after_id = None
+        root.title("迈克耳孙干涉测量 - 四点 ROI")
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.bind("<F11>", self.toggle_fullscreen)
+        root.bind("<Escape>", self.exit_fullscreen)
         self._build_ui()
+        self.worker = threading.Thread(target=self._capture_loop, daemon=True)
+        self.worker.start()
         self._update_frame()
 
-    def _build_ui(self) -> None:
-        style = ttk.Style()
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 16, "bold"))
-        style.configure("Value.TLabel", font=("Consolas", 12, "bold"))
-
-        header = ttk.Frame(self.root, padding=(12, 10))
-        header.pack(fill="x")
-        ttk.Label(header, text="迈克耳孙干涉波长测量", style="Title.TLabel").pack(side="left")
+    def _build_ui(self):
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        header = ttk.Frame(self.root, padding=6)
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="四点 ROI 干涉测量", font=("sans-serif", 12, "bold")).pack(side="left")
+        ttk.Button(header, text="全屏 F11", command=self.toggle_fullscreen).pack(side="right")
         self.state_var = tk.StringVar(value="演示模式" if self.demo_mode else "预览中")
-        ttk.Label(header, textvariable=self.state_var).pack(side="right")
+        ttk.Label(header, textvariable=self.state_var).pack(side="right", padx=8)
 
-        content = ttk.Frame(self.root, padding=(12, 0, 12, 8))
-        content.pack(fill="both", expand=True)
-        self.video_canvas = tk.Canvas(content, width=640, height=480, bg="#111111", highlightthickness=0)
+        content = ttk.Frame(self.root, padding=(6, 0, 6, 6))
+        content.grid(row=1, column=0, sticky="nsew")
+        content.columnconfigure(0, weight=3)
+        content.columnconfigure(1, weight=2, minsize=260)
+        content.rowconfigure(0, weight=1)
+        left = ttk.Frame(content)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=3)
+        left.rowconfigure(2, weight=1)
+        self.video_canvas = tk.Canvas(left, width=1, height=1, bg="#111111", highlightthickness=0)
         self.video_canvas.grid(row=0, column=0, sticky="nsew")
         self.video_canvas.bind("<Button-1>", self._select_roi)
+        ttk.Label(left, text="单击图像设置中心 | 四点独立波形", font=("sans-serif", 9)).grid(
+            row=1, column=0, sticky="w")
+        self.wave_canvas = tk.Canvas(left, width=1, height=1, bg="#101820", highlightthickness=0)
+        self.wave_canvas.grid(row=2, column=0, sticky="nsew")
 
-        right = ttk.Frame(content, padding=(12, 0, 0, 0))
+        right = ttk.Frame(content)
         right.grid(row=0, column=1, sticky="nsew")
-        ttk.Label(right, text="中心区域平均灰度（最近 360 帧）").pack(anchor="w")
-        self.wave_canvas = tk.Canvas(right, width=520, height=230, bg="#101820", highlightthickness=0)
-        self.wave_canvas.pack(fill="x", pady=(4, 12))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+        self.panel_canvas = tk.Canvas(right, width=280, height=1, highlightthickness=0)
+        self.panel_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(right, orient="vertical", command=self.panel_canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.panel_canvas.configure(yscrollcommand=scrollbar.set)
+        self.panel = ttk.Frame(self.panel_canvas, padding=6)
+        self.panel_item = self.panel_canvas.create_window(0, 0, window=self.panel, anchor="nw")
+        self.panel.bind("<Configure>", lambda event: self.panel_canvas.configure(
+            scrollregion=self.panel_canvas.bbox("all")))
+        self.panel_canvas.bind("<Configure>", self._resize_panel)
+        self.root.bind("<MouseWheel>", self._scroll_panel, add="+")
+        self.root.bind("<Button-4>", self._scroll_panel, add="+")
+        self.root.bind("<Button-5>", self._scroll_panel, add="+")
 
-        readings = ttk.LabelFrame(right, text="千分尺读数", padding=10)
+        results = ttk.LabelFrame(self.panel, text="结果（四点周期数中位数）", padding=6)
+        results.pack(fill="x")
+        self.result_vars = {name: tk.StringVar(value="-") for name in
+                            ("wavelength", "cycles", "frames", "rate", "agreement", "quality")}
+        fields = (("wavelength", "波长"), ("cycles", "合并周期数"), ("frames", "采样"),
+                  ("rate", "帧率 / 条纹频率"), ("agreement", "有效点 / 极差"), ("quality", "状态"))
+        for key, label in fields:
+            row = ttk.Frame(results)
+            row.pack(fill="x", pady=1)
+            ttk.Label(row, text=label).pack(side="left")
+            ttk.Label(row, textvariable=self.result_vars[key]).pack(side="right")
+        self.channel_vars = [tk.StringVar(value=f"{label}: 等待采集") for label in _LABELS]
+        for variable, color in zip(self.channel_vars, _COLORS):
+            ttk.Label(results, textvariable=variable, foreground=color).pack(anchor="w")
+        self.warning_var = tk.StringVar(value="先定位中心；测量时单向缓慢移动 M2。")
+        self.warning_label = ttk.Label(results, textvariable=self.warning_var,
+                                       foreground="#b45309", wraplength=260)
+        self.warning_label.pack(fill="x", pady=(5, 0))
+
+        geometry = ttk.LabelFrame(self.panel, text="四点位置", padding=6)
+        geometry.pack(fill="x", pady=6)
+        self.offset_var = tk.IntVar(value=self.offset)
+        ttk.Label(geometry, text="距中心 / px").pack(side="left")
+        self.offset_spin = ttk.Spinbox(geometry, from_=2 * self.radius + 1, to=500,
+                                      width=6, textvariable=self.offset_var)
+        self.offset_spin.pack(side="left", padx=4)
+        self.apply_button = ttk.Button(geometry, text="应用", command=self.apply_geometry)
+        self.apply_button.pack(side="right")
+
+        readings = ttk.LabelFrame(self.panel, text="千分尺读数", padding=6)
         readings.pack(fill="x")
-        self.start_var = tk.StringVar()
-        self.end_var = tk.StringVar()
-        self.resolution_var = tk.StringVar(
-            value="" if self.measurement_config.get("micrometer_resolution_um") is None
-            else str(self.measurement_config["micrometer_resolution_um"])
-        )
-        self._entry_row(readings, 0, "起始读数 / mm", self.start_var)
-        self._entry_row(readings, 1, "终止读数 / mm", self.end_var)
-        self._entry_row(readings, 2, "分辨率 / μm", self.resolution_var)
+        self.start_var, self.end_var = tk.StringVar(), tk.StringVar()
+        resolution = self.settings.get("micrometer_resolution_um")
+        self.resolution_var = tk.StringVar(value="" if resolution is None else str(resolution))
+        self.start_entry = self._entry_row(readings, 0, "起始 / mm", self.start_var)
+        self._entry_row(readings, 1, "终止 / mm", self.end_var)
+        self._entry_row(readings, 2, "分辨率 / um", self.resolution_var)
 
-        buttons = ttk.Frame(right)
-        buttons.pack(fill="x", pady=10)
-        self.start_button = ttk.Button(buttons, text="开始记录", command=self.start_recording)
-        self.stop_button = ttk.Button(buttons, text="停止并分析", command=self.stop_and_analyze, state="disabled")
-        self.start_button.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self.stop_button.pack(side="left", expand=True, fill="x", padx=(4, 0))
-        ttk.Button(right, text="按当前读数计算并保存", command=self.calculate_and_save).pack(fill="x")
-
-        results = ttk.LabelFrame(right, text="测量结果", padding=10)
-        results.pack(fill="both", expand=True, pady=(10, 0))
-        self.result_vars = {
-            "frames": tk.StringVar(value="\u2014"),
-            "cycles": tk.StringVar(value="\u2014"),
-            "rate": tk.StringVar(value="\u2014"),
-            "contrast": tk.StringVar(value="\u2014"),
-            "wavelength": tk.StringVar(value="\u2014"),
-            "deviation": tk.StringVar(value="\u2014"),
-            "quality": tk.StringVar(value="\u2014"),
-        }
-        labels = [
-            ("frames", "采样"),
-            ("cycles", "周期数（相位 / 过零）"),
-            ("rate", "帧率 / 条纹频率"),
-            ("contrast", "条纹对比度"),
-            ("wavelength", "测得波长"),
-            ("deviation", "相对 632.8 nm 偏差"),
-            ("quality", "数据质量"),
-        ]
-        for row, (key, label) in enumerate(labels):
-            ttk.Label(results, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=2)
-            ttk.Label(results, textvariable=self.result_vars[key], style="Value.TLabel").grid(
-                row=row, column=1, sticky="w", pady=2
-            )
-        self.warning_var = tk.StringVar(value="单击画面可移动采样区域；测量时必须单向、缓慢移动 M2。")
-        ttk.Label(results, textvariable=self.warning_var, foreground="#b45309", wraplength=480).grid(
-            row=len(labels), column=0, columnspan=2, sticky="w", pady=(8, 0)
-        )
+        actions = ttk.Frame(right, padding=(0, 5, 0, 0))
+        actions.grid(row=1, column=0, columnspan=2, sticky="ew")
+        actions.columnconfigure((0, 1), weight=1)
+        self.start_button = ttk.Button(actions, text="开始记录", command=self.start_recording)
+        self.start_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        self.stop_button = ttk.Button(actions, text="停止并分析", command=self.stop_and_analyze, state="disabled")
+        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+        self.save_button = ttk.Button(actions, text="计算并保存", command=self.calculate_and_save, state="disabled")
+        self.save_button.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
     @staticmethod
-    def _entry_row(parent: ttk.Frame, row: int, label: str, variable: tk.StringVar) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=3)
-        ttk.Entry(parent, textvariable=variable, width=18).grid(row=row, column=1, sticky="ew", pady=3)
+    def _entry_row(parent, row, label, variable):
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        entry = ttk.Entry(parent, textvariable=variable, width=12)
+        entry.grid(row=row, column=1, sticky="ew", pady=2)
         parent.columnconfigure(1, weight=1)
+        return entry
 
-    def _select_roi(self, event: tk.Event) -> None:
-        if self.last_frame_shape is None:
+    def _resize_panel(self, event):
+        self.panel_canvas.itemconfigure(self.panel_item, width=event.width)
+        self.warning_label.configure(wraplength=max(160, event.width - 30))
+
+    def _scroll_panel(self, event):
+        # Only scroll when the pointer is inside the right panel.
+        widget = event.widget
+        while widget is not None:
+            if widget is self.panel_canvas:
+                direction = -1 if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0 else 1
+                self.panel_canvas.yview_scroll(direction * 3, "units")
+                return "break"
+            widget = getattr(widget, "master", None)
+
+    def toggle_fullscreen(self, event=None):
+        self.fullscreen = not self.fullscreen
+        self.root.attributes("-fullscreen", self.fullscreen)
+        return "break"
+
+    def exit_fullscreen(self, event=None):
+        self.fullscreen = False
+        self.root.attributes("-fullscreen", False)
+        return "break"
+
+    def apply_geometry(self):
+        try:
+            offset = int(self.offset_var.get())
+            if offset < 2 * self.radius + 1:
+                raise ValueError("间距太小，四点采样区域会重叠。")
+        except (ValueError, tk.TclError) as error:
+            messagebox.showerror("ROI 参数", str(error))
             return
-        frame_height, frame_width = self.last_frame_shape
-        canvas_width = max(self.video_canvas.winfo_width(), 1)
-        canvas_height = max(self.video_canvas.winfo_height(), 1)
-        self.roi_center = (
-            int(np.clip(event.x * frame_width / canvas_width, 0, frame_width - 1)),
-            int(np.clip(event.y * frame_height / canvas_height, 0, frame_height - 1)),
-        )
+        with self.lock:
+            if self.recording:
+                return
+            if self.shape is not None:
+                center, points, offset = roi_positions(self.center, self.shape, offset, self.radius)
+                self.center, self.points = center, points
+            self.offset = offset
+            self.preview.clear()
+        self.offset_var.set(offset)
+        self.warning_var.set("间距已设置；靠近边界时位置会自动限制在图像内。")
 
-    def _roi_mean(self, gray: np.ndarray) -> float:
-        height, width = gray.shape
-        if self.roi_center is None:
-            self.roi_center = (width // 2, height // 2)
-        x, y = self.roi_center
-        radius = int(self.measurement_config.get("roi_radius_px", 8))
-        y0, y1 = max(0, y - radius), min(height, y + radius + 1)
-        x0, x1 = max(0, x - radius), min(width, x + radius + 1)
-        local = gray[y0:y1, x0:x1]
-        yy, xx = np.ogrid[y0:y1, x0:x1]
-        mask = (xx - x) ** 2 + (yy - y) ** 2 <= radius**2
-        selected = local[mask]
-        return float(np.mean(selected)) if selected.size else float(gray[y, x])
-
-    def _update_frame(self) -> None:
-        ok, frame, timestamp = self.camera.read()
-        if not ok or frame is None:
-            self.state_var.set("摄像头读取失败")
-            self.root.after(100, self._update_frame)
+    def _select_roi(self, event):
+        if self.display_mapping is None:
             return
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        self.last_frame_shape = gray.shape
-        intensity = self._roi_mean(gray)
-        self.preview_values.append(intensity)
-        if self.recording:
-            self.timestamps.append(timestamp)
-            self.intensities.append(intensity)
-            self.result_vars["frames"].set(f"{len(self.timestamps)} 帧")
+        scale, x0, y0, width, height = self.display_mapping
+        x, y = (event.x - x0) / scale, (event.y - y0) / scale
+        if not (0 <= x < width and 0 <= y < height):
+            return
+        with self.lock:
+            if self.recording:
+                self.warning_var.set("记录中已锁定 ROI；停止后才能移动。")
+                return
+            self.center = (int(x), int(y))
+            self.preview.clear()
 
+    def _capture_loop(self):
+        try:
+            while not self.stop_event.is_set():
+                ok, frame, timestamp = self.camera.read()
+                if not ok or frame is None:
+                    with self.lock:
+                        self.camera_error = "摄像头读取失败"
+                        if self.recording:
+                            self.recording_error = "记录期间读取图像失败，存在遗漏；请重新采集。"
+                    self.stop_event.wait(0.1)
+                    continue
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                with self.lock:
+                    if self.recording and self.shape != gray.shape:
+                        raise ValueError("记录中图像尺寸发生变化，请重新采集。")
+                    center = self.center or (gray.shape[1] // 2, gray.shape[0] // 2)
+                    center, points, actual_offset = roi_positions(center, gray.shape, self.offset, self.radius)
+                    values = sample_rois(gray, points, self.radius)
+                    self.center, self.points, self.shape = center, points, gray.shape
+                    self.camera_error = ""
+                    self.sequence += 1
+                    self.latest = (frame, points, values, self.sequence, actual_offset)
+                    self.preview.append(values)
+                    if self.recording:
+                        self.timestamps.append(timestamp)
+                        self.samples.append(values)
+        except Exception as error:
+            with self.lock:
+                self.camera_error = str(error)
+        finally:
+            self.camera.close()
+
+    def _update_frame(self):
+        if self.closed:
+            return
+        with self.lock:
+            latest = self.latest
+            preview = list(self.preview)
+            error = self.camera_error
+            count = len(self.timestamps)
+        if error:
+            self.state_var.set("采集异常")
+            self.warning_var.set(error)
+        if latest is not None and latest[3] != self.drawn_sequence:
+            frame, points, values, sequence, offset = latest
+            self._display_video(frame, points)
+            self.drawn_sequence = sequence
+            if self.last_multi is None:
+                for variable, label, value in zip(self.channel_vars, _LABELS, values):
+                    variable.set(f"{label}: 灰度 {value:.1f}")
+            if self.recording:
+                self.result_vars["frames"].set(f"{count} 帧")
+        now = time.monotonic()
+        if now - self.last_wave_time >= 0.125:
+            self._draw_waveform(preview)
+            self.last_wave_time = now
+        self.after_id = self.root.after(66, self._update_frame)
+
+    def _display_video(self, frame, points):
         display = frame.copy()
-        x, y = self.roi_center or (gray.shape[1] // 2, gray.shape[0] // 2)
-        radius = int(self.measurement_config.get("roi_radius_px", 8))
-        cv2.circle(display, (x, y), radius, (0, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(
-            display,
-            f"ROI mean: {intensity:.1f}",
-            (12, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (0, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-        canvas_width = max(self.video_canvas.winfo_width(), 640)
-        canvas_height = max(self.video_canvas.winfo_height(), 480)
-        image = Image.fromarray(rgb).resize((canvas_width, canvas_height), _BILINEAR)
+        for index, ((x, y), color) in enumerate(zip(points, _BGR)):
+            cv2.circle(display, (x, y), self.radius, color, 2, cv2.LINE_AA)
+            cv2.putText(display, str(index + 1), (x + self.radius + 2, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        height, width = frame.shape[:2]
+        cw, ch = max(1, self.video_canvas.winfo_width()), max(1, self.video_canvas.winfo_height())
+        target_width = max(1, min(cw, int(ch * width / height)))
+        target_height = max(1, round(target_width * height / width))
+        x0, y0 = (cw - target_width) // 2, (ch - target_height) // 2
+        self.display_mapping = (target_width / width, x0, y0, width, height)
+        image = Image.fromarray(cv2.cvtColor(display, cv2.COLOR_BGR2RGB))
+        image = image.resize((target_width, target_height), _BILINEAR)
         self.photo = ImageTk.PhotoImage(image=image)
         if self.video_item is None:
-            self.video_item = self.video_canvas.create_image(0, 0, image=self.photo, anchor="nw")
+            self.video_item = self.video_canvas.create_image(x0, y0, image=self.photo, anchor="nw")
         else:
+            self.video_canvas.coords(self.video_item, x0, y0)
             self.video_canvas.itemconfigure(self.video_item, image=self.photo)
-        self._draw_waveform()
-        self.root.after(1, self._update_frame)
 
-    def _draw_waveform(self) -> None:
+    def _draw_waveform(self, samples):
         canvas = self.wave_canvas
         canvas.delete("all")
-        width = max(canvas.winfo_width(), 2)
-        height = max(canvas.winfo_height(), 2)
-        values = np.asarray(self.preview_values, dtype=float)
-        for fraction in (0.25, 0.5, 0.75):
-            y = int(height * fraction)
-            canvas.create_line(0, y, width, y, fill="#263746")
-        if len(values) < 2:
+        width, height = max(2, canvas.winfo_width()), max(2, canvas.winfo_height())
+        if len(samples) < 2:
             return
-        low, high = np.percentile(values, [2, 98])
-        if high <= low:
-            high = low + 1
-        x_coordinates = np.linspace(0, width - 1, len(values))
-        y_coordinates = height - 8 - (values - low) / (high - low) * (height - 16)
-        points = [coordinate for pair in zip(x_coordinates, y_coordinates) for coordinate in pair]
-        canvas.create_line(*points, fill="#38bdf8", width=2, smooth=False)
-        canvas.create_text(8, 8, text=f"{low:.1f}\u2013{high:.1f}", fill="#d7e5ee", anchor="nw")
+        values = np.asarray(samples)
+        xx = np.linspace(0, width - 1, len(values))
+        # Separate lanes preserve each channel's visibility despite DC differences.
+        lane = height / 4
+        for index, color in enumerate(_COLORS):
+            signal = values[:, index]
+            low, high = float(signal.min()), float(signal.max())
+            yy = (index + 1) * lane - 3 - (signal - low) / max(high - low, 1.0) * max(1, lane - 14)
+            coordinates = [float(v) for pair in zip(xx, yy) for v in pair]
+            canvas.create_line(*coordinates, fill=color, width=1)
+            canvas.create_text(3, index * lane + 2, text=f"{index + 1}: {signal[-1]:.1f}",
+                               fill=color, anchor="nw")
 
-    def start_recording(self) -> None:
-        if not self.start_var.get().strip():
-            messagebox.showinfo("需要起始读数", "请先填写千分尺起始读数，再开始记录。")
-            return
+    def start_recording(self):
         try:
-            float(self.start_var.get())
+            start = float(self.start_var.get())
+            if not np.isfinite(start):
+                raise ValueError("起始读数必须是有限数字。")
         except ValueError:
-            messagebox.showerror("读数格式错误", "起始读数必须是数字，单位为 mm。")
+            messagebox.showerror("起始读数", "请填写有效起始读数，单位 mm。")
             return
-        self.timestamps.clear()
-        self.intensities.clear()
-        self.last_analysis = None
-        self.last_wavelength = None
-        self.recording = True
-        self.state_var.set("正在记录：请单向缓慢移动 M2")
+        with self.lock:
+            if self.points is None or self.camera_error or not self.worker.is_alive():
+                messagebox.showerror("采集未就绪", "等待摄像头图像正常后再开始记录。")
+                return
+            self.timestamps.clear()
+            self.samples.clear()
+            center, points, offset = roi_positions(self.center, self.shape, self.offset, self.radius)
+            self.center, self.points, self.offset = center, points, offset
+            self.recording_error = ""
+            self.geometry_snapshot = {"center_px": center, "points_px": points,
+                                      "offset_px": offset, "radius_px": self.radius}
+            self.recording = True
+        self.measurement_start = start
+        self.last_multi, self.last_wavelength = None, None
+        for variable in self.result_vars.values():
+            variable.set("-")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.warning_var.set("保持 M2 单向移动；若波形变化太密，请立即降低速度。")
+        self.save_button.configure(state="disabled")
+        self.start_entry.configure(state="disabled")
+        self.offset_spin.configure(state="disabled")
+        self.apply_button.configure(state="disabled")
+        self.state_var.set("记录中")
+        self.warning_var.set("ROI 已锁定；保持单向缓慢移动，四点不能修复混叠漏计。")
 
-    def stop_and_analyze(self) -> None:
-        self.recording = False
+    def stop_and_analyze(self):
+        with self.lock:
+            self.recording = False
+            timestamps, samples = list(self.timestamps), list(self.samples)
+            error = self.recording_error or self.camera_error
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.state_var.set("正在分析")
+        self.start_entry.configure(state="normal")
+        self.offset_spin.configure(state="normal")
+        self.apply_button.configure(state="normal")
         try:
-            self.last_analysis = analyze_signal(
-                self.timestamps,
-                self.intensities,
-                safe_fringe_fraction_of_fps=float(
-                    self.measurement_config.get("safe_fringe_fraction_of_fps", 0.25)
-                ),
-                minimum_samples=int(self.measurement_config.get("minimum_samples", 60)),
-            )
+            if error:
+                raise ValueError(error)
+            result = analyze_rois(timestamps, samples,
+                safe_fringe_fraction_of_fps=float(self.settings.get("safe_fringe_fraction_of_fps", 0.25)),
+                minimum_samples=int(self.settings.get("minimum_samples", 60)))
         except ValueError as error:
             self.state_var.set("分析失败")
             self.warning_var.set(str(error))
-            messagebox.showerror("无法分析", str(error))
+            messagebox.showerror("无法合并四点", str(error))
             return
-
-        result = self.last_analysis
-        self.result_vars["frames"].set(f"{len(result.timestamps)} 帧 / {result.duration_s:.2f} s")
-        self.result_vars["cycles"].set(f"{result.cycles_phase:.3f} / {result.cycles_crossing}")
-        self.result_vars["rate"].set(
-            f"{result.sample_rate_hz:.1f} fps / {result.median_fringe_hz:.2f} Hz"
-        )
-        self.result_vars["contrast"].set(f"{result.contrast * 100:.1f}%")
-        self.result_vars["quality"].set(result.quality)
-        self.warning_var.set("；".join(result.warnings) if result.warnings else "数据检查通过，可以输入终止读数计算。")
+        self.last_multi = result
+        analysis = result.analysis
+        self.result_vars["cycles"].set(f"{result.cycles:.3f}")
+        self.result_vars["frames"].set(f"{len(timestamps)} / {analysis.duration_s:.1f} s")
+        self.result_vars["rate"].set(f"{analysis.sample_rate_hz:.1f} / {analysis.median_fringe_hz:.2f} Hz")
+        self.result_vars["agreement"].set(f"{len(result.accepted)}/4 / {result.spread_cycles:.3f} 周期")
+        self.result_vars["quality"].set(analysis.quality)
+        for name, label, variable in zip(ROI_NAMES, _LABELS, self.channel_vars):
+            channel = result.channels.get(name)
+            if name in result.rejected:
+                variable.set(f"{label}: 排除 ({result.rejected[name]})")
+            elif channel is not None:
+                variable.set(f"{label}: {channel.cycles_phase:.3f} 周期 / 对比度 {channel.contrast:.0%}")
+        self.warning_var.set("；".join(analysis.warnings) or "四点一致性通过；输入终止读数计算。")
         self.state_var.set("分析完成")
+        self.save_button.configure(state="normal")
+        self.panel_canvas.yview_moveto(0)
 
-    def calculate_and_save(self) -> None:
-        if self.last_analysis is None:
-            messagebox.showinfo("尚无分析结果", "请先完成一次记录并点击“停止并分析”。")
+    def calculate_and_save(self):
+        if self.last_multi is None:
             return
         try:
-            start = float(self.start_var.get())
             end = float(self.end_var.get())
+            if not np.isfinite(end):
+                raise ValueError("终止读数必须是有限数字。")
             resolution_text = self.resolution_var.get().strip()
             resolution = float(resolution_text) if resolution_text else None
-            cycle_uncertainty = abs(
-                self.last_analysis.cycles_phase - self.last_analysis.cycles_crossing
-            )
-            self.last_wavelength = calculate_wavelength(
-                start,
-                end,
-                self.last_analysis.cycles_phase,
-                micrometer_resolution_um=resolution,
-                cycle_uncertainty=cycle_uncertainty,
-            )
-        except ValueError as error:
-            messagebox.showerror("无法计算", str(error))
+            if resolution is not None and (not np.isfinite(resolution) or resolution <= 0):
+                raise ValueError("分辨率必须为正数或留空。")
+            result = calculate_wavelength(self.measurement_start, end, self.last_multi.cycles)
+            self.last_wavelength = result
+            # No calibrated cycle uncertainty exists yet; do not label agreement as it.
+            self.result_vars["wavelength"].set(f"{result.wavelength_nm:.3f} nm")
+            metadata = {"start_reading_mm": self.measurement_start, "end_reading_mm": end,
+                        "micrometer_resolution_um": resolution, "demo_mode": self.demo_mode,
+                        "roi_geometry": self.geometry_snapshot,
+                        "merged_cycles": self.last_multi.cycles,
+                        "spread_cycles": self.last_multi.spread_cycles,
+                        "accepted_rois": self.last_multi.accepted,
+                        "rejected_rois": self.last_multi.rejected,
+                        "representative_roi": self.last_multi.representative,
+                        "uncertainty_note": "尚无完整标定，不报告合成不确定度"}
+            paths = save_measurement(self.config.get("output_directory", "data"),
+                self.last_multi.analysis, result, metadata,
+                channels=self.last_multi.channels,
+                raw_timestamps=self.timestamps, raw_samples=self.samples)
+        except (ValueError, OSError) as error:
+            messagebox.showerror("计算或保存失败", str(error))
             return
-
-        result = self.last_wavelength
-        uncertainty = "" if result.uncertainty_nm is None else f" ± {result.uncertainty_nm:.3f}"
-        self.result_vars["wavelength"].set(f"{result.wavelength_nm:.3f}{uncertainty} nm")
-        reference = float(self.measurement_config.get("reference_wavelength_nm", 632.8))
-        deviation = (result.wavelength_nm - reference) / reference * 100
-        self.result_vars["deviation"].set(f"{deviation:+.3f}%")
-
-        paths = save_measurement(
-            self.config.get("output_directory", "data"),
-            self.last_analysis,
-            self.last_wavelength,
-            {
-                "start_reading_mm": start,
-                "end_reading_mm": end,
-                "roi_center_px": self.roi_center,
-                "roi_radius_px": int(self.measurement_config.get("roi_radius_px", 8)),
-                "demo_mode": self.demo_mode,
-            },
-        )
         self.state_var.set("结果已保存")
+        self.panel_canvas.yview_moveto(0)
         messagebox.showinfo("保存完成", f"数据已保存：\n{paths[0]}\n{paths[1]}")
 
-    def close(self) -> None:
-        self.camera.close()
+    def close(self):
+        self.closed = True
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+        self.stop_event.set()
+        self.worker.join(timeout=0.5)
         self.root.destroy()
 
 
-def run_gui(camera, config: dict, *, demo_mode: bool = False) -> None:
+def run_gui(camera, config, *, demo_mode=False):
     root = tk.Tk()
-    root.minsize(1120, 620)
+    root.minsize(640, 360)
+    width = max(640, min(1200, root.winfo_screenwidth() - 40))
+    height = max(360, min(760, root.winfo_screenheight() - 80))
+    root.geometry(f"{width}x{height}+10+10")
     MichelsonApp(root, camera, config, demo_mode=demo_mode)
     root.mainloop()

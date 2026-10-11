@@ -9,6 +9,7 @@
   },
   "measurement": {
     "roi_radius_px": 8,
+    "roi_offset_px": 40,
     "reference_wavelength_nm": 632.8,
     "micrometer_resolution_um": null,
     "safe_fringe_fraction_of_fps": 0.25,
