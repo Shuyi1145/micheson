@@ -24,6 +24,11 @@ def main() -> None:
     parser.add_argument("--headless", action="store_true", help="仅图传，不打开桌面测量界面（需 --web）")
     parser.add_argument("--host", default="127.0.0.1", help="图传监听地址；局域网用 0.0.0.0")
     parser.add_argument("--port", type=int, default=8080, help="图传端口，默认 8080")
+    parser.add_argument("--video", help="逐帧分析本地视频并导出原图/开闭运算对比")
+    parser.add_argument("--roi-center", type=int, nargs=2, metavar=("X", "Y"), help="原视频像素坐标")
+    parser.add_argument("--video-start", type=float, default=0, help="视频分析起点 / s")
+    parser.add_argument("--video-end", type=float, help="视频分析终点 / s")
+    parser.add_argument("--no-preview-export", action="store_true", help="仅分析视频，不导出对比 MP4")
     args = parser.parse_args()
     if args.headless and not args.web:
         parser.error("--headless 需要同时指定 --web")
@@ -31,6 +36,18 @@ def main() -> None:
         parser.error("端口必须在 1-65535 范围内")
 
     config = load_config(args.config)
+    if args.video:
+        if args.demo or args.web or args.headless or args.camera is not None:
+            parser.error("视频离线分析不能与 demo/web/headless/camera 混用")
+        from michelson.video import analyze_video
+        directory, result = analyze_video(args.video, config,
+            center=None if args.roi_center is None else tuple(args.roi_center),
+            start_s=args.video_start, end_s=args.video_end,
+            export_preview=not args.no_preview_export,
+            progress=lambda count, stamp: print(f"已分析 {count} 帧，视频时间 {stamp:.1f} s"))
+        print(f"结果目录：{directory}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     if args.camera is not None:
         config["camera"]["index"] = args.camera
     camera = DemoCamera(config["camera"]) if args.demo else UsbCamera(config["camera"])
